@@ -63,16 +63,12 @@
 
 #define USE_VCP
 
-// Enable MSC with SD card SPI backend for RP2350A target
+// MSC is enabled when a storage backend is configured (see common_post.h)
 #define USE_USB_MSC
-#define USE_SDCARD
-#define USE_SDCARD_SPI
 
 #undef USE_SOFTSERIAL1
 #undef USE_SOFTSERIAL2
 #undef USE_TRANSPONDER
-#undef USE_FLASH
-#undef USE_FLASH_CHIP
 #undef USE_TIMER
 #undef USE_RCC
 
@@ -133,29 +129,12 @@
 #undef USE_MULTI_GYRO
 
 #undef USE_RANGEFINDER_HCSR04
-#undef USE_MAG
-#undef USE_MAG_HMC5883
-#undef USE_MAG_SPI_HMC5883
 #undef USE_VTX_RTC6705
 #undef USE_VTX_RTC6705_SOFTSPI
 #undef USE_SRXL
 #undef USE_SPEKTRUM
 #undef USE_SPEKTRUM_BIND
 
-#undef USE_SERIAL_PASSTHROUGH
-
-#undef USE_MSP_UART
-#undef USE_MSP_DISPLAYPORT
-
 #undef USE_DSHOT_BITBANG
 #define USE_DSHOT_TELEMETRY
-#undef USE_ESC_SENSOR
-
-#undef USE_VTX
-#undef USE_VTX_TRAMP
-#undef USE_VTX_SMARTAUDIO
-#undef USE_SPEKTRUM_VTX_CONTROL
-#undef USE_VTX_COMMON
-
 #undef USE_RPM_LIMIT
-#undef USE_OSD_HD
