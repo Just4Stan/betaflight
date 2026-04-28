@@ -1033,8 +1033,11 @@ static void lsm6dsk320xGyroInit(gyroDev_t *gyro)
     // Enable the acc digital LPF2 filter
     spiWriteReg(dev, LSM6DSV_CTRL9, LSM6DSV_CTRL9_LPF2_XL_EN);
 
-    // Generate pulse on interrupt line, not requiring a read to clear
-    spiWriteReg(dev, LSM6DSV_CTRL4, LSM6DSV_CTRL4_DRDY_PULSED);
+    // [DIAG] Use latched DRDY (cleared by reading data registers) instead of
+    // 75 us pulse mode. Hypothesis: on RP2350 @ 150 MHz the EXTI + SPI DMA
+    // setup latency under high IRQ load can exceed the pulse window, dropping
+    // samples and causing filter cascade phase drift.
+    spiWriteReg(dev, LSM6DSV_CTRL4, 0);
 
     // From section 4.1, Mechanical characteristics, of the datasheet, G_So is 70mdps/LSB for FS = ±2000 dps.
     gyro->scale = 0.070f;
@@ -1118,8 +1121,11 @@ static void lsm6dsv16xGyroInit(gyroDev_t *gyro)
     // Enable the gyro digital LPF1 filter
     spiWriteReg(dev, LSM6DSV_CTRL7, LSM6DSV_CTRL7_LPF1_G_EN);
 
-    // Generate pulse on interrupt line, not requiring a read to clear
-    spiWriteReg(dev, LSM6DSV_CTRL4, LSM6DSV_CTRL4_DRDY_PULSED);
+    // [DIAG] Use latched DRDY (cleared by reading data registers) instead of
+    // 75 us pulse mode. Hypothesis: on RP2350 @ 150 MHz the EXTI + SPI DMA
+    // setup latency under high IRQ load can exceed the pulse window, dropping
+    // samples and causing filter cascade phase drift.
+    spiWriteReg(dev, LSM6DSV_CTRL4, 0);
 
     // From section 4.1, Mechanical characteristics, of the datasheet, G_So is 70mdps/LSB for FS = ±2000 dps.
     gyro->scale = 0.070f;
