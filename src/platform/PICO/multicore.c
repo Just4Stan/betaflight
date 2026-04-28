@@ -23,6 +23,7 @@
 #include "platform/multicore.h"
 #include "pico/multicore.h"
 #include "pico/util/queue.h"
+#include "pico/flash.h"
 
 #ifdef USE_MULTICORE
 
@@ -38,6 +39,11 @@ static queue_t core1_queue;
 
 static void core1_main(void)
 {
+    // Register this core as a flash_safe_execute lockout victim so that core0
+    // can safely erase/program flash (e.g. config writes) without this core
+    // executing from XIP during the operation.
+    flash_safe_execute_core_init();
+
     // This loop is run on the second core
     while (true) {
 
