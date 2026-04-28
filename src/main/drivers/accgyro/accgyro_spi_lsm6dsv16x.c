@@ -989,10 +989,14 @@ static void lsm6dsk320xGyroInit(gyroDev_t *gyro)
                                     LSM6DSV_HAODR_CFG_HAODR_SEL_MASK,
                                     LSM6DSV_HAODR_CFG_HAODR_SEL_SHIFT));
 
-    // Enable 16G sensitivity
-    // Set the LPF1 filter bandwidth
+    // [DIAG] Tighten acc LPF2 from BW_4 (ODR/4 = 250 Hz) to BW_45 (ODR/45 ~= 22 Hz).
+    // Hypothesis: motor-harmonic vibration leaks through the wide BW_4 acc LPF
+    // and pollutes the IMU fusion's gravity vector, causing the "gravity
+    // vector wandering" symptom in ANGLE mode and possibly destabilising the
+    // gyro/acc cross-correction in ACRO too. Real attitude changes happen at
+    // < 1 Hz so 22 Hz is plenty of bandwidth for tilt detection.
     spiWriteReg(dev, LSM6DSV_CTRL8,
-                LSM6DSV_ENCODE_BITS(LSM6DSV_CTRL8_HP_LPF2_XL_BW_4,
+                LSM6DSV_ENCODE_BITS(LSM6DSV_CTRL8_HP_LPF2_XL_BW_45,
                                     LSM6DSV_CTRL8_HP_LPF2_XL_BW_2_MASK,
                                     LSM6DSV_CTRL8_HP_LPF2_XL_BW_2_SHIFT) |
                 LSM6DSV_ENCODE_BITS(LSM6DSV_CTRL8_FS_XL_16G,
