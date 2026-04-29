@@ -36,6 +36,7 @@
 
 #include "hardware/clocks.h"
 #include "hardware/timer.h"
+#include "hardware/vreg.h"
 #include "hardware/watchdog.h"
 #include "pico/bootrom.h"
 #include "pico/unique_id.h"
@@ -106,6 +107,23 @@ void cycleCounterInit(void)
 void systemInit(void)
 {
     //TODO: implement
+
+#ifdef PICO_OVERCLOCK_KHZ
+    // Optional opt-in overclock above the pico-sdk default 150 MHz.
+    // Targets that want this set PICO_OVERCLOCK_KHZ in their config.h, e.g.
+    // #define PICO_OVERCLOCK_KHZ 250000  (250 MHz @ VDD_CORE 1.15V).
+    //
+    // Bump VDD_CORE first so the PLL has headroom to relock at the higher
+    // sysclk. clk_peri is derived from clk_sys, so SPI / DSHOT / UART / PIO
+    // dividers all rescale automatically via clock_get_hz() on later use.
+    //
+    // 250 MHz @ 1.15V is well below RP2350's 300 MHz "needs unlock" cliff,
+    // a clean 5x50 multiple so PLL_USB stays untouched, and widely reported
+    // stable. Higher targets are at the user's own risk.
+    vreg_set_voltage(VREG_VOLTAGE_1_15);
+    busy_wait_us(2000);
+    set_sys_clock_khz(PICO_OVERCLOCK_KHZ, true);
+#endif
 
     SystemInit();
 
