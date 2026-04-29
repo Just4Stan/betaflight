@@ -594,6 +594,7 @@ MCU_COMMON_SRC = \
             PICO/usb/usb_descriptors.c \
             PICO/usb/usb_msc_pico.c \
             PICO/multicore.c \
+            PICO/core1_ring.c \
             PICO/debug_pin.c \
             PICO/light_ws2811strip_pico.c
 
