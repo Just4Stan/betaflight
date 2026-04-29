@@ -31,6 +31,7 @@
 #include "drivers/accgyro/accgyro.h"
 
 #include "build/build_config.h"
+#include "build/core_affinity.h"
 #include "build/debug.h"
 
 #include "common/maths.h"
@@ -363,6 +364,10 @@ void schedulerResetCheckFunctionMaxExecutionTime(void)
 
 void schedulerInit(void)
 {
+    // NOTE: on USE_MULTICORE targets schedulerInit() is invoked from
+    // initPhase3 via multicoreExecuteBlocking(), so it runs on core1, not
+    // core0. The invariant we want to lock is "scheduler() main loop runs
+    // on core0", and that's asserted at the top of scheduler() below.
     queueClear();
     queueAdd(getTask(TASK_SYSTEM));
 
@@ -485,6 +490,8 @@ static void readSchedulerLocals(task_t *selectedTask, uint8_t selectedTaskDynami
 
 FAST_CODE void scheduler(void)
 {
+    ASSERT_CORE0(); // hard-realtime: scheduler tick must run on core0
+
     static uint32_t checkCycles = 0;
     static uint32_t scheduleCount = 0;
 #if defined(USE_LATE_TASK_STATISTICS)

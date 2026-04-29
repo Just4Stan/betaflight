@@ -74,3 +74,19 @@ typedef struct multicore_task_s {
 } multicore_task_t;
 
 bool multicoreScheduleTask(const multicore_task_t *task);
+
+// -----------------------------------------------------------------------------
+// Core-affinity invariant assertions
+// -----------------------------------------------------------------------------
+//
+// Hard-realtime gyro/PID/scheduler code paths must always run on core0; core1
+// is reserved for best-effort offload (multicoreScheduleTask consumers, the
+// fire-and-forget queue). Adding asserts at the entry of those paths makes
+// the invariant a build-time-checkable contract and surfaces accidental
+// regressions immediately rather than as mysterious flight glitches.
+//
+// Use the wrapper macros in build/core_affinity.h (which works on every
+// target) rather than calling these directly.
+#include "pico/platform.h"  // for hard_assert + get_core_num
+#define PLATFORM_ASSERT_CORE0() hard_assert(get_core_num() == 0)
+#define PLATFORM_ASSERT_CORE1() hard_assert(get_core_num() == 1)
