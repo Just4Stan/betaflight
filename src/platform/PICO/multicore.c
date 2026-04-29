@@ -37,6 +37,47 @@ typedef struct {
 static queue_t core0_queue;
 static queue_t core1_queue;
 
+// -------------------- scheduled-task table --------------------
+//
+// Populated by multicoreScheduleTask() before multicoreStart() launches
+// core1. After the launch the table is read-only from core1's perspective,
+// which keeps the consumer-side dispatch lockless.
+
+static const multicore_task_t *scheduled_tasks[MULTICORE_MAX_TASKS];
+static volatile uint8_t scheduled_task_count = 0;
+static volatile bool core1_running = false;
+
+bool multicoreScheduleTask(const multicore_task_t *task)
+{
+    // The contract is "must be called before multicoreStart()". Once core1
+    // is launched the scheduled-task table is read-only from the consumer
+    // side; mutating it here would require a lock and break the lockless
+    // dispatch invariant. Refuse late registrations and assert in debug
+    // builds to surface bugs at the callsite.
+    if (core1_running) {
+        return false;
+    }
+    if (task == NULL || task->update == NULL) {
+        return false;
+    }
+    if (scheduled_task_count >= MULTICORE_MAX_TASKS) {
+        return false;
+    }
+    scheduled_tasks[scheduled_task_count++] = task;
+    return true;
+}
+
+static inline void core1_run_scheduled_tasks(void)
+{
+    const uint8_t n = scheduled_task_count;
+    for (uint8_t i = 0; i < n; i++) {
+        const multicore_task_t *t = scheduled_tasks[i];
+        if (t && t->update) {
+            t->update();
+        }
+    }
+}
+
 static void core1_main(void)
 {
     // Register this core as a flash_safe_execute lockout victim so that core0
@@ -44,7 +85,6 @@ static void core1_main(void)
     // executing from XIP during the operation.
     flash_safe_execute_core_init();
 
-    // This loop is run on the second core
     while (true) {
 
         core_message_t msg;
@@ -73,7 +113,7 @@ static void core1_main(void)
             }
         }
 
-        // TODO call scheduler here for core 1 tasks
+        core1_run_scheduled_tasks();
 
         tight_loop_contents();
     }
@@ -88,6 +128,7 @@ void multicoreStart(void)
     queue_init(&core0_queue, sizeof(bool), 1);
 
     // Start core 1
+    core1_running = true;
     multicore_launch_core1(core1_main);
 }
 

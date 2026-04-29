@@ -21,6 +21,8 @@
 
 #pragma once
 
+#include <stdbool.h>
+
 #include "pico/multicore.h"
 
 typedef enum multicoreCommand_e {
@@ -37,3 +39,38 @@ void multicoreStart(void);
 void multicoreStop(void);
 void multicoreExecute(core1_func_t *func);
 void multicoreExecuteBlocking(core1_func_t *func);
+
+// -----------------------------------------------------------------------------
+// Lightweight scheduled-task API for core1 (Phase 1 multicore work).
+// -----------------------------------------------------------------------------
+//
+// multicoreExecute*() above is fire-and-forget / blocking-on-completion: every
+// call enqueues a function pointer and the consumer side runs it once. That is
+// fine for one-shot work (config-flash writes, init steps) but is the wrong
+// shape for a sustained per-loop workload such as moving dyn_notch SDFT or a
+// future chirp analyser onto core1.
+//
+// multicoreScheduleTask() registers a long-lived task whose `update()` is
+// invoked from core1_main() in steady-state, alongside the existing fire-and-
+// forget queue. Tasks are expected to do their own internal pacing (read from
+// a SPSC ring of samples produced by core0, drain whatever is available, then
+// return). Tasks remain registered for the lifetime of the firmware run.
+//
+// API contract:
+//   - multicoreScheduleTask() must be called before multicoreStart() (i.e.
+//     during BF init, before core1 is launched). Calls after the core has
+//     started are ignored to keep the consumer-side data structures lockless.
+//   - The total number of registered tasks is bounded (MULTICORE_MAX_TASKS).
+//   - Tasks must be reentrancy-safe with their own producer side; the ring
+//     primitives in core1_ring.h provide the SPSC pattern.
+
+#define MULTICORE_MAX_TASKS 4
+
+typedef void (*multicore_task_update_fn)(void);
+
+typedef struct multicore_task_s {
+    multicore_task_update_fn update;
+    const char *name;   // for debug / future telemetry; may be NULL
+} multicore_task_t;
+
+bool multicoreScheduleTask(const multicore_task_t *task);
