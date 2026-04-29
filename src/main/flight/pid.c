@@ -27,6 +27,7 @@
 #include "platform.h"
 
 #include "build/build_config.h"
+#include "build/core_affinity.h"
 #include "build/debug.h"
 
 #include "common/axis.h"
@@ -1086,6 +1087,8 @@ NOINLINE static void applySpa(int axis, const pidProfile_t *pidProfile)
 // Based on 2DOF reference design (matlab)
 void FAST_CODE pidController(const pidProfile_t *pidProfile, timeUs_t currentTimeUs)
 {
+    ASSERT_CORE0(); // hard-realtime: PID loop must run on core0
+
     static float previousGyroRateDterm[XYZ_AXIS_COUNT];
     static float previousRawGyroRateDterm[XYZ_AXIS_COUNT];
 

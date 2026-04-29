@@ -26,6 +26,7 @@
 
 #include "platform.h"
 
+#include "build/core_affinity.h"
 #include "build/debug.h"
 
 #include "common/axis.h"
@@ -423,6 +424,8 @@ static FAST_CODE void gyroUpdateSensor(gyroSensor_t *gyroSensor)
 
 FAST_CODE void gyroUpdate(void)
 {
+    ASSERT_CORE0(); // hard-realtime: gyro sampling must run on core0
+
     // ensure that gyroADC don't contain a stale value
     float adcSum[XYZ_AXIS_COUNT] = {0};
 
