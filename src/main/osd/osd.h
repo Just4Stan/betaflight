@@ -201,6 +201,7 @@ typedef enum {
     OSD_LIDAR_DIST,
     OSD_CUSTOM_SERIAL_TEXT,
     OSD_BATTERY_PROFILE_NAME,
+    OSD_SYSID_PID,           // Sysid suggestion: "ID R 44/80/38" cycles through axes
 
 #if defined(USE_GPS) && ENABLE_FLIGHT_PLAN
     // Waypoint elements

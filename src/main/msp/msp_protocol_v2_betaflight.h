@@ -36,6 +36,7 @@
 #define MSP2_SET_BATTERY_PROFILE            0x300F
 #define MSP2_CLI_SETTING                    0x3010
 #define MSP2_CLI_SETTING_INFO               0x3011
+#define MSP2_SYSID_RESULT                   0x3012  // out: per-axis on-board PID identifier fit (PR-D)
 
 // MSP2_SET_TEXT and MSP2_GET_TEXT variable types
 #define MSP2TEXT_PILOT_NAME                      1

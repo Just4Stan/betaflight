@@ -30,6 +30,10 @@
 #include "build/core_affinity.h"
 #include "build/debug.h"
 
+#ifdef USE_SYSID
+#include "flight/sysid.h"
+#endif
+
 #include "common/axis.h"
 #include "common/filter.h"
 
@@ -1188,11 +1192,21 @@ void FAST_CODE pidController(const pidProfile_t *pidProfile, timeUs_t currentTim
 
     static int chirpAxis = 0;
     static bool shouldChirpAxisToggle = false;
+#ifdef USE_SYSID
+    static bool sysidWasActive = false;
+#endif
 
     float chirp = 0.0f;
     float sinarg = 0.0f;
     if (FLIGHT_MODE(CHIRP_MODE)) {
         shouldChirpAxisToggle = true;  // advance chirp axis on next !CHIRP_MODE
+#ifdef USE_SYSID
+        if (!sysidWasActive) {
+            // Rising edge: arm the sysid capture for the new axis.
+            sysidNotifyChirpStart(chirpAxis);
+            sysidWasActive = true;
+        }
+#endif
         // update chirp signal
         if (chirpUpdate(&pidRuntime.chirp)) {
             chirp = pidRuntime.chirp.exc;
@@ -1200,6 +1214,13 @@ void FAST_CODE pidController(const pidProfile_t *pidProfile, timeUs_t currentTim
         }
     } else {
         if (shouldChirpAxisToggle) {
+#ifdef USE_SYSID
+            // Falling edge: hand the captured ring off to the core1 worker.
+            // Done BEFORE incrementing chirpAxis so we notify the axis we
+            // were just chirping.
+            sysidNotifyChirpEnd(chirpAxis);
+            sysidWasActive = false;
+#endif
             // toggle chirp signal logic and increment to next axis for next run
             shouldChirpAxisToggle = false;
             chirpAxis = (++chirpAxis > FD_YAW) ? 0 : chirpAxis;
@@ -1296,6 +1317,14 @@ void FAST_CODE pidController(const pidProfile_t *pidProfile, timeUs_t currentTim
 #ifdef USE_CHIRP
         currentPidSetpoint += currentChirp;
 #endif // USE_CHIRP
+#if defined(USE_CHIRP) && defined(USE_SYSID)
+        // Capture (setpoint, gyro) for on-board system ID. The sysid module
+        // is itself gated on capturing==true, which is set only between
+        // sysidNotifyChirpStart() and sysidNotifyChirpEnd() for this axis.
+        if (axis == chirpAxis) {
+            sysidPushSample(axis, currentPidSetpoint, gyroRate);
+        }
+#endif
         float errorRate = currentPidSetpoint - gyroRate; // r - y
 #if defined(USE_ACC)
         handleCrashRecovery(

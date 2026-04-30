@@ -51,6 +51,9 @@
 #include "flight/failsafe.h"
 #include "flight/imu.h"
 #include "flight/mixer.h"
+#ifdef USE_SYSID
+#include "flight/sysid.h"
+#endif
 #include "flight/pid.h"
 #include "flight/pid_init.h"
 #include "flight/rpm_filter.h"
@@ -742,6 +745,11 @@ void writeEEPROM(void)
 {
 #ifdef USE_RX_SPI
     rxSpiStop(); // some rx spi protocols use hardware timer, which needs to be stopped before writing to eeprom
+#endif
+#ifdef USE_SYSID
+    // Snapshot the current in-RAM sysid fits into the persisted config
+    // group right before the save so the latest results survive a reboot.
+    sysidCommitToConfig();
 #endif
     systemConfigMutable()->configurationState = CONFIGURATION_STATE_CONFIGURED;
 

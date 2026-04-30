@@ -88,6 +88,9 @@
 #include "flight/mixer.h"
 #include "flight/pid.h"
 #include "flight/pid_init.h"
+#ifdef USE_SYSID
+#include "flight/sysid.h"
+#endif
 #include "flight/position.h"
 #include "flight/rpm_filter.h"
 #include "flight/servos.h"
@@ -2697,6 +2700,34 @@ static mspResult_e mspFcProcessOutCommandWithArg(mspDescriptor_t srcDesc, int16_
         sbufWriteU8(dst, profile->consumptionWarningPercentage);
         break;
     }
+
+#ifdef USE_SYSID
+    case MSP2_SYSID_RESULT:
+        {
+            // Payload: 3 axes × {K, wn_rad_s, zeta, rmse_db, suggested P/I/D, flags}
+            for (int ax = 0; ax < SYSID_AXIS_COUNT; ax++) {
+                sysid_result_t r;
+                bool got = sysidGetResult(ax, &r);
+                if (!got) memset(&r, 0, sizeof(r));
+                int sp = 0, si = 0, sd = 0;
+                const bool gp = sysidSuggestPid(&r, &sp, &si, &sd);
+                uint32_t bits;
+                sbufWriteU8(dst, (uint8_t)ax);
+                memcpy(&bits, &r.K, 4);        sbufWriteU32(dst, bits);
+                memcpy(&bits, &r.wn_rad_s, 4); sbufWriteU32(dst, bits);
+                memcpy(&bits, &r.zeta, 4);     sbufWriteU32(dst, bits);
+                memcpy(&bits, &r.rmse_db, 4);  sbufWriteU32(dst, bits);
+                sbufWriteU8(dst, (uint8_t)(gp ? sp : 0));
+                sbufWriteU8(dst, (uint8_t)(gp ? si : 0));
+                sbufWriteU8(dst, (uint8_t)(gp ? sd : 0));
+                sbufWriteU8(dst, (uint8_t)r.flags);
+                sbufWriteU16(dst, r.Nbands);
+                sbufWriteU8(dst,  r.iters);
+                sbufWriteU32(dst, r.timestamp_ms);
+            }
+            break;
+        }
+#endif
 
 #ifdef USE_CLI
     case MSP2_CLI_SETTING:
