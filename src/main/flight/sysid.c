@@ -177,18 +177,18 @@ static void sysid_compute_axis(int axis)
         if (s_coh[0] < 1.0f) { s_H_re[0] = 0.0f; s_H_im[0] = 0.0f; }
         s_coh[0] = 0.0f;
         for (int k = 1; k < SYSID_NFREQ; k++) {
-            const float w  = 6.28318530f * s_freq_axis[k];
+            const float omega = 6.28318530f * s_freq_axis[k];
             // D-term PT1 filter H_D(jω) = 1 / (1 + jω/(2π fc_d))
             //                           = (1 - jω/twopi_fc_d) / (1 + (ω/twopi_fc_d)²)
-            const float r = (fc_d > 0.0f) ? (w / twopi_fc_d) : 0.0f;
+            const float r = (fc_d > 0.0f) ? (omega / twopi_fc_d) : 0.0f;
             const float den_d = 1.0f + r * r;
             const float HDre =  1.0f / den_d;
             const float HDim = -r    / den_d;
             // Controller C(jω) = Kp + Ki/(jω) + Kd · jω · H_D(jω)
             //   Ki/(jω) = -j Ki/ω
             //   Kd·jω·(HDre + jHDim) = Kd · (-ω HDim + j ω HDre)
-            const float C_re = Kp - Kd * w * HDim;
-            const float C_im = Kd * w * HDre - Ki / w;
+            const float C_re = Kp - Kd * omega * HDim;
+            const float C_im = Kd * omega * HDre - Ki / omega;
             // 1 - T
             const float oneMTre = 1.0f - s_H_re[k];
             const float oneMTim =      - s_H_im[k];
@@ -400,7 +400,7 @@ FAST_CODE void sysidPushSample(int axis, float setpoint, float gyroUnfilt)
     ASSERT_CORE0();
     if (axis < 0 || axis >= SYSID_AXIS_COUNT) return;
     if (s_capturing_axis != (uint8_t)axis) return;
-    // Stride-decimate from PID rate (8 kHz) down to ~1 kHz capture rate.
+    // Stride-decimate from PID rate (8 kHz) down to 500 Hz capture rate.
     if (++s_push_skip < SYSID_PUSH_STRIDE) return;
     s_push_skip = 0;
     if (s_buf_count >= SYSID_RING_LEN) return;
