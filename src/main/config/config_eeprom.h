@@ -23,7 +23,11 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define EEPROM_CONF_VERSION 179  // 178 → 179: PR-D adds OSD_SYSID_PID + sysidConfig
+#define EEPROM_CONF_VERSION 178
+// PR-D adds OSD_SYSID_PID at the END of osd_items_e (no shift of existing
+// values) and a new sysidConfig group with its own PG_REGISTER. PG-load
+// gracefully zero-pads new fields when reading a shorter saved EEPROM, so
+// no version bump is required to land USE_SYSID as an opt-in feature.
 
 bool isEEPROMVersionValid(void);
 bool isEEPROMStructureValid(void);
