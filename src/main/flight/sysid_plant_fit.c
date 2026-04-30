@@ -146,7 +146,9 @@ bool plant_fit_2nd_order(const float *freq_hz,
     float wn   = wn0;
     float zeta = zeta0;
 
-    const int   max_iter = 80;
+    // Clean data converges in 8–12 iters; pathological data wastes compute
+    // without converging on a meaningful answer. 30 is a generous budget.
+    const int   max_iter = 30;
     const float tol_step = 5e-5f;
     int it = 0;
     bool converged = false;
