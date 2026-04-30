@@ -37,8 +37,10 @@
  * Concurrency model:
  *   - head index is written ONLY by the producer (core0).
  *   - tail index is written ONLY by the consumer (core1).
- *   - The buffer storage and indices live in SCRATCH_X so neither core
- *     touches the other's L1 stripe.
+ *   - Buffer storage lives in normal BSS today. SCRATCH_X placement
+ *     (one 4 KB block per core, no cross-core cache contention) is a
+ *     future optimisation that needs a linker-script change; the
+ *     SPSC fences below are correct on shared SRAM regardless.
  *   - On the M33 a plain aligned uint32_t store/load is atomic; we add
  *     compiler barriers via __atomic_thread_fence() to keep the producer
  *     from publishing the head before the payload is committed and the

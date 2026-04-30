@@ -145,8 +145,13 @@ static void runJob(const dynNotchOffloadJob_t *j)
         }
     }
 
-    // Publish result (single writer = core1; reader = core0).
+    // Publish result (single writer = core1; reader = core0). If the
+    // previous result hasn't been consumed yet, DROP this update — writing
+    // to r->result while core0 might be mid-copy is the data race.
     axisResult_t *r = &s_results[j->axis];
+    if (__atomic_load_n(&r->ready, __ATOMIC_ACQUIRE) != 0u) {
+        return;
+    }
     for (int p = 0; p < count; p++) {
         r->result.peakBins[p] = peakBins[p];
         r->result.centerFreqOut[p] = centerFreqOut[p];
@@ -243,6 +248,8 @@ bool dynNotchOffloadPoll(int axis, dynNotchOffloadResult_t *out)
         return false;
     }
     *out = r->result;
+    // Producer (core1) is contractually quiet while ready==1 (see runJob),
+    // so the copy above is race-free. Now release the slot.
     __atomic_store_n(&r->ready, 0u, __ATOMIC_RELEASE);
     return true;
 }
