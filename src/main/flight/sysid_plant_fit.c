@@ -107,9 +107,9 @@ bool plant_fit_initial_guess(const float *freq_hz,
 // is called only from sysid_compute_axis on core1 and is not reentrant — a
 // 3 KB stack allocation here would risk overflowing the 4 KB core1 stack.
 enum { PLANT_FIT_MAX_BANDS = 128 };
-static int   s_pf_idx[PLANT_FIT_MAX_BANDS];
-static float s_pf_w[PLANT_FIT_MAX_BANDS];
-static float s_pf_y[PLANT_FIT_MAX_BANDS];
+static int   s_pf_core1_idx[PLANT_FIT_MAX_BANDS];
+static float s_pf_core1_w[PLANT_FIT_MAX_BANDS];
+static float s_pf_core1_y[PLANT_FIT_MAX_BANDS];
 
 bool plant_fit_2nd_order(const float *freq_hz,
                          const float *H_re, const float *H_im,
@@ -119,9 +119,9 @@ bool plant_fit_2nd_order(const float *freq_hz,
                          float K0, float wn0, float zeta0,
                          plant_fit_t *out)
 {
-    int   *idx = s_pf_idx;
-    float *w_w = s_pf_w;
-    float *y   = s_pf_y;
+    int   *idx = s_pf_core1_idx;
+    float *w_w = s_pf_core1_w;
+    float *y   = s_pf_core1_y;
     int Nb = 0;
     enum { MAX_BANDS = PLANT_FIT_MAX_BANDS };
     for (int k = 0; k < Nfreq && Nb < MAX_BANDS; k++) {
