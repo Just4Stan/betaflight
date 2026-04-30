@@ -1,7 +1,27 @@
 /*
- * Welch H1 estimator + MSC coherence — algorithm body.
- * See sysid_welch.h.
+ * This file is part of Betaflight.
+ *
+ * Betaflight is free software. You can redistribute this software
+ * and/or modify this software under the terms of the GNU General
+ * Public License as published by the Free Software Foundation,
+ * either version 3 of the License, or (at your option) any later
+ * version.
+ *
+ * Betaflight is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ *
+ * See the GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public
+ * License along with this software.
+ *
+ * If not, see <http://www.gnu.org/licenses/>.
  */
+
+// Welch H1 estimator + MSC coherence. Pure C port of pichim's MATLAB
+// `estimate_frequency_response.m` from `pichim/bf_controller_tuning`
+// (GPL-3.0). Algorithm body; see sysid_welch.h for the public API.
 
 #include "platform.h"
 
@@ -63,67 +83,72 @@ void welch_reset(welch_t *w) {
     w->Navg = 0;
 }
 
-static void load_demean(float *dst, const float *src, int n, float global_mean) {
-    double seg_sum = 0.0;
-    for (int i = 0; i < n; i++) {
-        float v = src[i] - global_mean;
-        dst[i] = v;
-        seg_sum += (double)v;
-    }
-    const float seg_mean = (float)(seg_sum / (double)n);
-    for (int i = 0; i < n; i++) dst[i] -= seg_mean;
-}
+// (load_demean / mul_window were used by the old batch welch_process. The
+// streaming + per-segment paths inline these operations now.)
 
-static void mul_window(float *x, const float *w, int n) {
-    for (int i = 0; i < n; i++) x[i] *= w[i];
+void welch_process_segment(welch_t *w, float *seg_u, float *seg_y) {
+    const int N = w->N;
+    const float invNW = 1.0f / ((float)N * w->W);
+
+    // Per-segment DC removal (matches pichim's algorithm). The pichim
+    // batch-mode also subtracts a global mean first; that's a tiny
+    // correction over per-segment demean and we drop it for streaming
+    // (we'd need a running global mean over the whole chirp, which adds
+    // state for negligible benefit — the per-segment demean already
+    // removes the dominant low-frequency drift).
+    double su = 0.0, sy = 0.0;
+    for (int i = 0; i < N; i++) { su += (double)seg_u[i]; sy += (double)seg_y[i]; }
+    const float mu_u = (float)(su / (double)N);
+    const float mu_y = (float)(sy / (double)N);
+    for (int i = 0; i < N; i++) {
+        seg_u[i] = (seg_u[i] - mu_u) * w->win[i];
+        seg_y[i] = (seg_y[i] - mu_y) * w->win[i];
+    }
+    welch_fft_rfft(w->fft, seg_u, w->Ure, w->Uim);
+    welch_fft_rfft(w->fft, seg_y, w->Yre, w->Yim);
+
+    // Apply 1/(N*W) once per segment, accumulate spectra.
+    for (int k = 0; k < w->Nfreq; k++) {
+        const float ur = w->Ure[k] * invNW, ui = w->Uim[k] * invNW;
+        const float yr = w->Yre[k] * invNW, yi = w->Yim[k] * invNW;
+
+        float duu = ur*ur + ui*ui;
+        float dyy = yr*yr + yi*yi;
+        float dyu_re = yr*ur + yi*ui;
+        float dyu_im = yi*ur - yr*ui;
+
+        if (k == 0 || k == N / 2) {
+            duu *= 0.25f;
+            dyy *= 0.25f;
+            dyu_re *= 0.25f;
+            dyu_im *= 0.25f;
+        }
+
+        w->Suu[k]    += duu;
+        w->Syy[k]    += dyy;
+        w->Syu_re[k] += dyu_re;
+        w->Syu_im[k] += dyu_im;
+    }
+    w->Navg++;
 }
 
 void welch_process(welch_t *w, const float *inp, const float *out, int Ndata) {
+    // Batch convenience: walk the input in N-overlap segments, copying each
+    // into the welch_t's seg buffer and feeding to welch_process_segment.
     const int N = w->N;
     const int step = N - w->noverlap;
-    const float invNW = 1.0f / ((float)N * w->W);
-
-    // Global demean of inp / out (matches pichim's algorithm).
-    double mu_i = 0.0, mu_o = 0.0;
-    for (int i = 0; i < Ndata; i++) { mu_i += (double)inp[i]; mu_o += (double)out[i]; }
-    mu_i /= (double)Ndata; mu_o /= (double)Ndata;
-    const float gmi = (float)mu_i, gmo = (float)mu_o;
-
     int s = 0;
     while (s + N <= Ndata) {
-        // U spectrum
-        load_demean(w->seg, &inp[s], N, gmi);
-        mul_window(w->seg, w->win, N);
-        welch_fft_rfft(w->fft, w->seg, w->Ure, w->Uim);
-
-        // Y spectrum
-        load_demean(w->seg, &out[s], N, gmo);
-        mul_window(w->seg, w->win, N);
-        welch_fft_rfft(w->fft, w->seg, w->Yre, w->Yim);
-
-        // Apply 1/(N*W) once per segment, accumulate spectra.
-        for (int k = 0; k < w->Nfreq; k++) {
-            const float ur = w->Ure[k] * invNW, ui = w->Uim[k] * invNW;
-            const float yr = w->Yre[k] * invNW, yi = w->Yim[k] * invNW;
-
-            float duu = ur*ur + ui*ui;
-            float dyy = yr*yr + yi*yi;
-            float dyu_re = yr*ur + yi*ui;
-            float dyu_im = yi*ur - yr*ui;
-
-            if (k == 0 || k == N / 2) {
-                duu *= 0.25f;
-                dyy *= 0.25f;
-                dyu_re *= 0.25f;
-                dyu_im *= 0.25f;
-            }
-
-            w->Suu[k]    += duu;
-            w->Syy[k]    += dyy;
-            w->Syu_re[k] += dyu_re;
-            w->Syu_im[k] += dyu_im;
-        }
-        w->Navg++;
+        // The streaming entry takes a separate seg_y buffer; the welch_t
+        // only owns one seg scratch. For batch we re-use a stack-resident
+        // pointer dance: load u into seg, save aside a local y copy.
+        // Simpler: process u via seg, and use seg for y too — but we need
+        // both spectra per segment. Use seg for u, copy y into Yre/Yim
+        // staging (dirty but works, since welch_process_segment overwrites
+        // them anyway). To keep things clean, fall back to a stack array.
+        float seg_y_local[1024];   // safe upper bound for N up to 1024
+        for (int i = 0; i < N; i++) { w->seg[i] = inp[s + i]; seg_y_local[i] = out[s + i]; }
+        welch_process_segment(w, w->seg, seg_y_local);
         s += step;
     }
 }
