@@ -1,14 +1,17 @@
 /*
- * Host FFT backend for welch_h1 — radix-2 in-place complex FFT, then
+ * FFT backend for sysid_welch — radix-2 in-place complex FFT, then
  * extracts the first N/2+1 bins of the real-input spectrum.
  *
  * For real input x[0..N-1], we run a full N-point CFFT (with the imaginary
  * part of input set to zero) and read bins 0..N/2. Slightly wasteful (2x
  * memory + 2x compute vs a packed half-size CFFT trick) but trivially
- * correct, and host-only validation work doesn't care about runtime.
+ * correct.
  *
- * On-board (welch_fft_arm.c, not this file) calls arm_rfft_fast_f32 and
- * unpacks its packed format into the same (Re[], Im[]) shape.
+ * USED BY BOTH host validation AND the on-board PICO build. CMSIS-DSP
+ * arm_rfft_fast_f32 would roughly halve the compute on M33+FPU but
+ * needs ~50 KB of CMSIS source folded into the PICO build; deferred
+ * until the rest of the pipeline is flight-validated. See PLAN section
+ * 9.5 for the trade study.
  */
 
 #include "platform.h"
