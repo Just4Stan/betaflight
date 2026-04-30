@@ -27,9 +27,6 @@
 
 #include "hardware/flash.h"
 #include "hardware/sync.h"
-#ifdef USE_MULTICORE
-#include "pico/flash.h"
-#endif
 
 #if defined(CONFIG_IN_FLASH)
 
@@ -48,47 +45,26 @@ void configClearFlags(void)
     // NOOP
 }
 
-typedef struct {
-    uint32_t flash_offs;
-    const void *buffer;
-} flashWriteParam_t;
-
-static void doFlashWrite(void *p)
-{
-    const flashWriteParam_t *param = (const flashWriteParam_t *)p;
-
-    if ((param->flash_offs % FLASH_SECTOR_SIZE) == 0) {
-        // Erase the flash sector before writing
-        flash_range_erase(param->flash_offs, FLASH_SECTOR_SIZE);
-    }
-
-    flash_range_program(param->flash_offs, param->buffer, CONFIG_STREAMER_BUFFER_SIZE);
-}
-
 configStreamerResult_e configWriteWord(uintptr_t address, config_streamer_buffer_type_t *buffer)
 {
-    STATIC_ASSERT(CONFIG_STREAMER_BUFFER_SIZE == sizeof(config_streamer_buffer_type_t) * CONFIG_STREAMER_BUFFER_SIZE,  "CONFIG_STREAMER_BUFFER_SIZE does not match written size");
+    // TODO: synchronise second core... see e.g. pico-examples flash_program, uses flash_safe_execute.
 
     // pico-sdk flash_range functions use the offset from start of FLASH
-    const flashWriteParam_t param = {
-        .flash_offs = address - XIP_BASE,
-        .buffer     = buffer,
-    };
+    uint32_t flash_offs = address - XIP_BASE;
 
-#ifdef USE_MULTICORE
-    // Park core1 (which must have called flash_safe_execute_core_init() at startup)
-    // and disable interrupts on the calling core before erasing/programming flash.
-    // Without this, the other core executing from XIP during the program/erase
-    // window would corrupt or hang the system.
-    if (flash_safe_execute(doFlashWrite, (void *)&param, UINT32_MAX) != PICO_OK) {
-        return CONFIG_RESULT_FAILURE;
-    }
-#else
     uint32_t interrupts = save_and_disable_interrupts();
-    doFlashWrite((void *)&param);
-    restore_interrupts(interrupts);
-#endif
 
+    if ((flash_offs % FLASH_SECTOR_SIZE) == 0) {
+        // Erase the flash sector before writing
+        flash_range_erase(flash_offs, FLASH_SECTOR_SIZE);
+    }
+
+    STATIC_ASSERT(CONFIG_STREAMER_BUFFER_SIZE == sizeof(config_streamer_buffer_type_t) * CONFIG_STREAMER_BUFFER_SIZE,  "CONFIG_STREAMER_BUFFER_SIZE does not match written size");
+
+    // Write data to flash
+    flash_range_program(flash_offs, buffer, CONFIG_STREAMER_BUFFER_SIZE);
+
+    restore_interrupts(interrupts);
     return CONFIG_RESULT_SUCCESS;
 }
 

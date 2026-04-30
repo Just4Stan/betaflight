@@ -21,8 +21,6 @@
 
 #pragma once
 
-#include <stdbool.h>
-
 #include "pico/multicore.h"
 
 typedef enum multicoreCommand_e {
@@ -39,63 +37,3 @@ void multicoreStart(void);
 void multicoreStop(void);
 void multicoreExecute(core1_func_t *func);
 void multicoreExecuteBlocking(core1_func_t *func);
-
-// -----------------------------------------------------------------------------
-// Lightweight scheduled-task API for core1 (Phase 1 multicore work).
-// -----------------------------------------------------------------------------
-//
-// multicoreExecute*() above is fire-and-forget / blocking-on-completion: every
-// call enqueues a function pointer and the consumer side runs it once. That is
-// fine for one-shot work (config-flash writes, init steps) but is the wrong
-// shape for a sustained per-loop workload such as moving dyn_notch SDFT or a
-// future chirp analyser onto core1.
-//
-// multicoreScheduleTask() registers a long-lived task whose `update()` is
-// invoked from core1_main() in steady-state, alongside the existing fire-and-
-// forget queue. Tasks are expected to do their own internal pacing (read from
-// a SPSC ring of samples produced by core0, drain whatever is available, then
-// return). Tasks remain registered for the lifetime of the firmware run.
-//
-// API contract:
-//   - multicoreScheduleTask() may be called any time, including AFTER
-//     multicoreStart(). The original "register before start" rule was
-//     relaxed once it became clear every BF init phase runs via
-//     multicoreExecuteBlocking after core1 has launched. The relaxation
-//     is single-producer (core0) / single-consumer (core1): slots are
-//     write-once, the count is monotonic-increment via atomic store
-//     with release ordering, core1 reads with acquire. See multicore.c
-//     for the full concurrency note.
-//   - The total number of registered tasks is bounded (MULTICORE_MAX_TASKS).
-//   - Tasks must be reentrancy-safe with their own producer side; the ring
-//     primitives in core1_ring.h provide the SPSC pattern.
-
-#define MULTICORE_MAX_TASKS 4
-
-typedef void (*multicore_task_update_fn)(void);
-
-typedef struct multicore_task_s {
-    multicore_task_update_fn update;
-    const char *name;   // for debug / future telemetry; may be NULL
-} multicore_task_t;
-
-bool multicoreScheduleTask(const multicore_task_t *task);
-
-// -----------------------------------------------------------------------------
-// Core-affinity invariant assertions
-// -----------------------------------------------------------------------------
-//
-// Hard-realtime gyro/PID/scheduler code paths must always run on core0; core1
-// is reserved for best-effort offload (multicoreScheduleTask consumers, the
-// fire-and-forget queue). Adding asserts at the entry of those paths makes
-// the invariant a build-time-checkable contract and surfaces accidental
-// regressions immediately rather than as mysterious flight glitches.
-//
-// Wrapper macros for use from generic BF code: ASSERT_CORE0() and
-// ASSERT_CORE1() expand to a hard_assert on USE_MULTICORE targets, and to
-// nothing elsewhere. Generic code should `#include "platform/multicore.h"`
-// inside a `#ifdef USE_MULTICORE` guard, or use the canonical pattern in
-// gyro.c / pid.c / scheduler.c (each of which only enters the guard when
-// the target supports it).
-#include "pico/platform.h"  // for hard_assert + get_core_num
-#define ASSERT_CORE0() hard_assert(get_core_num() == 0)
-#define ASSERT_CORE1() hard_assert(get_core_num() == 1)

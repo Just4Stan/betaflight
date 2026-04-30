@@ -5886,57 +5886,6 @@ bool cliSetSettingByName(const char *cmdline)
     return true;
 }
 
-#ifdef USE_SYSID
-#include "flight/sysid.h"
-
-static void cliSysid(const char *cmdName, char *cmdline)
-{
-    UNUSED(cmdName);
-    if (cmdline && strncmp(cmdline, "compute", 7) == 0) {
-        char *p = cmdline + 7;
-        while (*p == ' ') p++;
-        int axis = (*p) ? atoi(p) : 1;
-        cliPrintLinef("# computing axis %d ...", axis);
-        sysidComputeNow(axis);
-    }
-    cliPrintLinef("# captured samples: %u   compute last: %u us   max: %u us",
-                  (unsigned)sysidCaptureCount(),
-                  (unsigned)sysidLastComputeUs(),
-                  (unsigned)sysidMaxComputeUs());
-    cliPrintLinef("axis   K      wn(Hz)  zeta   rmse(dB)  Nb    conv   suggested P/I/D     age(ms)");
-    const char *names[] = {"roll ", "pitch", "yaw  "};
-    const uint32_t now = millis();
-    for (int ax = 0; ax < SYSID_AXIS_COUNT; ax++) {
-        sysid_result_t r;
-        if (!sysidGetResult(ax, &r)) {
-            cliPrintLinef("%s  no result yet", names[ax]);
-            continue;
-        }
-        const float wn_hz = r.wn_rad_s / (2.0f * 3.14159265f);
-        // Saturate age display at ~16 minutes; values older than that are
-        // either persisted-from-EEPROM or the timestamp wrapped (49.7 day
-        // millis() rollover).
-        uint32_t age = now - r.timestamp_ms;
-        if (age > 1000000u) age = 999999u;
-        int sp = 0, si = 0, sd = 0;
-        const bool got = sysidSuggestPid(&r, &sp, &si, &sd);
-        if (got) {
-            cliPrintLinef("%s  %5.3f  %5.2f  %5.3f  %5.2f     %3u   %s   %3d / %3d / %3d   %u",
-                          names[ax], (double)r.K, (double)wn_hz,
-                          (double)r.zeta, (double)r.rmse_db, r.Nbands,
-                          (r.flags & SYSID_FLAG_CONVERGED) ? "yes" : "no ",
-                          sp, si, sd, age);
-        } else {
-            cliPrintLinef("%s  %5.3f  %5.2f  %5.3f  %5.2f     %3u   %s   ---  rejected   %u",
-                          names[ax], (double)r.K, (double)wn_hz,
-                          (double)r.zeta, (double)r.rmse_db, r.Nbands,
-                          (r.flags & SYSID_FLAG_CONVERGED) ? "yes" : "no ",
-                          age);
-        }
-    }
-}
-#endif
-
 static void cliStatus(const char *cmdName, char *cmdline)
 {
     UNUSED(cmdName);
@@ -8189,9 +8138,6 @@ const clicmd_t cmdTable[] = {
         "\treverse <servo> <source> r|n", cliServoMix),
 #endif
     CLI_COMMAND_DEF("status", "show status", NULL, cliStatus),
-#ifdef USE_SYSID
-    CLI_COMMAND_DEF("sysid", "show on-board PID identifier results", "[compute <axis>]", cliSysid),
-#endif
     CLI_COMMAND_DEF("tasks", "show task stats", NULL, cliTasks),
 #ifdef USE_TIMER_MGMT
     CLI_COMMAND_DEF("timer", "show/set timers", "<> | <pin> list | <pin> [af<alternate function>|none|<option(deprecated)>] | list | show", cliTimer),

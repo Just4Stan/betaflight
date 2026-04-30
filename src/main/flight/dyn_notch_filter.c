@@ -51,7 +51,6 @@
 #include "sensors/gyro.h"
 
 #include "dyn_notch_filter.h"
-#include "dyn_notch_offload.h"
 
 // SDFT_SAMPLE_SIZE defaults to 72 (common/sdft.h).
 // We get 36 frequency bins from 72 consecutive data values, called SDFT_BIN_COUNT (common/sdft.h)
@@ -154,16 +153,6 @@ static FAST_DATA_ZERO_INIT int     sdftEndBin;
 static FAST_DATA_ZERO_INIT float   sdftNoiseThreshold;
 static FAST_DATA_ZERO_INIT float   pt1LooptimeS;
 
-// dyn_notch core1 offload (PICO RP2350 with USE_MULTICORE only; no-op stub
-// otherwise). When active, STEP_DETECT_PEAKS and STEP_CALC_FREQUENCIES are
-// posted to core1 right after STEP_WINDOW completes; the inline state
-// machine path is skipped for those two steps and STEP_UPDATE_FILTERS polls
-// the published result before applying notch coefficient updates.
-static FAST_DATA_ZERO_INIT bool   offloadActive;
-static FAST_DATA_ZERO_INIT bool   offloadPosted[XYZ_AXIS_COUNT];
-static FAST_DATA_ZERO_INIT dynNotchOffloadResult_t offloadResult[XYZ_AXIS_COUNT];
-static FAST_DATA_ZERO_INIT bool   offloadResultPending[XYZ_AXIS_COUNT];
-
 void dynNotchInit(const dynNotchConfig_t *config, const timeUs_t targetLooptimeUs)
 {
     // dynNotchUpdate() is running at looprateHz (which is the PID looprate aka. 1e6f / gyro.targetLooptime)
@@ -211,14 +200,7 @@ void dynNotchInit(const dynNotchConfig_t *config, const timeUs_t targetLooptimeU
             dynNotch.centerFreq[axis][p] = (p + 0.5f) * (dynNotch.maxHz - dynNotch.minHz) / (float)dynNotch.count + dynNotch.minHz;
             biquadFilterInit(&dynNotch.notch[axis][p], dynNotch.centerFreq[axis][p], dynNotch.looptimeUs, dynNotch.q, FILTER_NOTCH, 1.0f);
         }
-        offloadPosted[axis] = false;
-        offloadResultPending[axis] = false;
     }
-
-    // Try to register the core1 offload. If registration fails (e.g. on a
-    // non-multicore build, or when the scheduled-task table is full), the
-    // inline state-machine path stays in use.
-    offloadActive = dynNotchOffloadInit();
 }
 
 // Collect gyro data, to be downsampled and analysed in dynNotchUpdate() function
@@ -289,42 +271,12 @@ static FAST_CODE_NOINLINE void dynNotchProcess(void)
                 sdftNoiseThreshold += sdftData[bin];  // sdftData contains power spectral density
             }
 
-            // If the core1 offload is active, hand off STEP_DETECT_PEAKS and
-            // STEP_CALC_FREQUENCIES to core1; the inline path will skip them
-            // and STEP_UPDATE_FILTERS will poll for the result.
-            if (offloadActive) {
-                dynNotchOffloadJob_t job;
-                job.axis = state.axis;
-                job.peakCount = dynNotch.count;
-                job.startBin = sdftStartBin;
-                job.endBin = sdftEndBin;
-                job.resolutionHz = sdftResolutionHz;
-                job.minHz = dynNotch.minHz;
-                job.maxHz = dynNotch.maxHz;
-                job.pt1LooptimeS = pt1LooptimeS;
-                job.smoothHz = (float)DYN_NOTCH_SMOOTH_HZ;
-                job.noiseThresholdInitial = sdftNoiseThreshold;
-                for (int b = 0; b < SDFT_BIN_COUNT; b++) {
-                    job.sdftData[b] = sdftData[b];
-                }
-                for (int p = 0; p < dynNotch.count; p++) {
-                    job.centerFreqIn[p] = dynNotch.centerFreq[state.axis][p];
-                }
-                offloadPosted[state.axis] = dynNotchOffloadPost(&job);
-                offloadResultPending[state.axis] = offloadPosted[state.axis];
-            }
-
             DEBUG_SET(DEBUG_FFT_TIME, 1, micros() - startTime);
 
             break;
         }
         case STEP_DETECT_PEAKS: // 5.5us (4-7us) @ F722
         {
-            if (offloadPosted[state.axis]) {
-                // Detect runs on core1; nothing to do on core0 for this axis.
-                DEBUG_SET(DEBUG_FFT_TIME, 1, micros() - startTime);
-                break;
-            }
             // Get memory ready for new peak data on current axis
             for (int p = 0; p < dynNotch.count; p++) {
                 peaks[p].bin = 0;
@@ -370,12 +322,6 @@ static FAST_CODE_NOINLINE void dynNotchProcess(void)
         }
         case STEP_CALC_FREQUENCIES: // 4.0us (2-7us) @ F722
         {
-            if (offloadPosted[state.axis]) {
-                // Frequency calc runs on core1; nothing to do on core0 for this axis.
-                DEBUG_SET(DEBUG_FFT_TIME, 1, micros() - startTime);
-                break;
-            }
-
             // Approximate noise floor (= average power spectral density in dyn notch range, excluding peaks)
             int peakCount = 0;
             for (int p = 0; p < dynNotch.count; p++) {
@@ -441,44 +387,10 @@ static FAST_CODE_NOINLINE void dynNotchProcess(void)
         }
         case STEP_UPDATE_FILTERS: // 5.4us (2-9us) @ F722
         {
-            if (offloadPosted[state.axis]) {
-                // Drain the result published by core1. If it isn't ready
-                // yet, skip the update on this cycle - we use the previously
-                // computed notch coefficients for one more pass through this
-                // axis (the same behaviour as steady-state under-noise).
-                if (offloadResultPending[state.axis]) {
-                    if (dynNotchOffloadPoll(state.axis, &offloadResult[state.axis])) {
-                        offloadResultPending[state.axis] = false;
-                    }
-                }
-                if (!offloadResultPending[state.axis]) {
-                    const dynNotchOffloadResult_t *r = &offloadResult[state.axis];
-                    for (int p = 0; p < dynNotch.count; p++) {
-                        if (r->peakBins[p] != 0) {
-                            dynNotch.centerFreq[state.axis][p] = r->centerFreqOut[p];
-                            biquadFilterUpdate(&dynNotch.notch[state.axis][p],
-                                               dynNotch.centerFreq[state.axis][p],
-                                               dynNotch.looptimeUs, dynNotch.q,
-                                               FILTER_NOTCH, 1.0f);
-                        }
-                    }
-                    if (calculateThrottlePercentAbs() > DYN_NOTCH_OSD_MIN_THROTTLE) {
-                        dynNotch.maxCenterFreq = MAX(dynNotch.maxCenterFreq, r->maxCenterFreq);
-                    }
-                    if (state.axis == gyro.gyroDebugAxis) {
-                        for (int p = 0; p < dynNotch.count && p < DYN_NOTCH_COUNT_MAX; p++) {
-                            DEBUG_SET(DEBUG_FFT_FREQ, p + 1, lrintf(dynNotch.centerFreq[state.axis][p]));
-                        }
-                        DEBUG_SET(DEBUG_DYN_LPF, 1, lrintf(dynNotch.centerFreq[state.axis][0]));
-                    }
-                }
-                offloadPosted[state.axis] = false;
-            } else {
-                for (int p = 0; p < dynNotch.count; p++) {
-                    // Only update notch filter coefficients if the corresponding peak got its center frequency updated in the previous step
-                    if (peaks[p].bin != 0 && peaks[p].value > sdftNoiseThreshold) {
-                        biquadFilterUpdate(&dynNotch.notch[state.axis][p], dynNotch.centerFreq[state.axis][p], dynNotch.looptimeUs, dynNotch.q, FILTER_NOTCH, 1.0f);
-                    }
+            for (int p = 0; p < dynNotch.count; p++) {
+                // Only update notch filter coefficients if the corresponding peak got its center frequency updated in the previous step
+                if (peaks[p].bin != 0 && peaks[p].value > sdftNoiseThreshold) {
+                    biquadFilterUpdate(&dynNotch.notch[state.axis][p], dynNotch.centerFreq[state.axis][p], dynNotch.looptimeUs, dynNotch.q, FILTER_NOTCH, 1.0f);
                 }
             }
 

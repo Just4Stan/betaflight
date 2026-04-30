@@ -164,7 +164,6 @@
 #define PG_CAN_PIN_CONFIG           563
 #define PG_CAN_CONFIG               564
 #define PG_DRONECAN_CONFIG          565
-#define PG_SYSID_CONFIG             566
 
 // TODO TBC
 #define PG_DISPLAY_PORT_FBOSD_CONFIG 561

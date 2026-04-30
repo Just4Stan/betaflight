@@ -23,7 +23,6 @@
 #include "platform/multicore.h"
 #include "pico/multicore.h"
 #include "pico/util/queue.h"
-#include "pico/flash.h"
 
 #ifdef USE_MULTICORE
 
@@ -37,67 +36,9 @@ typedef struct {
 static queue_t core0_queue;
 static queue_t core1_queue;
 
-// -------------------- scheduled-task table --------------------
-//
-// Populated by multicoreScheduleTask(). The original PR2 contract was
-// "register before multicoreStart()" so the table could stay lockless;
-// in practice every BF init path runs *after* multicoreStart() (because
-// multicoreExecuteBlocking() is what dispatches initPhase1/2/3 onto
-// core1 to begin with).
-//
-// CONCURRENCY MODEL — single producer, single consumer:
-//   - Producer: core0 only. All BF init paths that register tasks run
-//     either before multicoreStart() or inside initPhaseN which is
-//     itself dispatched serially via multicoreExecuteBlocking. There is
-//     never a second producer in BF today.
-//   - Consumer: core1 main loop only.
-//   - Slots are write-once: a task pointer is stored, then the count
-//     is bumped. The count is monotonic. core1 reads the count atomically
-//     and then walks slots [0, count); slots in that range are
-//     guaranteed published.
-//
-// If a future caller wants concurrent registrations from core1 or from
-// multiple core0 contexts, this needs a CAS on the count plus a write
-// barrier — at which point a small spinlock would be cleaner than the
-// current relaxed-atomic dance.
-
-static const multicore_task_t *scheduled_tasks[MULTICORE_MAX_TASKS];
-static volatile uint8_t scheduled_task_count = 0;
-static volatile bool core1_running = false;
-
-bool multicoreScheduleTask(const multicore_task_t *task)
-{
-    if (task == NULL || task->update == NULL) {
-        return false;
-    }
-    const uint8_t n = scheduled_task_count;
-    if (n >= MULTICORE_MAX_TASKS) {
-        return false;
-    }
-    scheduled_tasks[n] = task;
-    __atomic_thread_fence(__ATOMIC_RELEASE);
-    __atomic_store_n(&scheduled_task_count, (uint8_t)(n + 1), __ATOMIC_RELEASE);
-    return true;
-}
-
-static inline void core1_run_scheduled_tasks(void)
-{
-    const uint8_t n = __atomic_load_n(&scheduled_task_count, __ATOMIC_ACQUIRE);
-    for (uint8_t i = 0; i < n; i++) {
-        const multicore_task_t *t = scheduled_tasks[i];
-        if (t && t->update) {
-            t->update();
-        }
-    }
-}
-
 static void core1_main(void)
 {
-    // Register this core as a flash_safe_execute lockout victim so that core0
-    // can safely erase/program flash (e.g. config writes) without this core
-    // executing from XIP during the operation.
-    flash_safe_execute_core_init();
-
+    // This loop is run on the second core
     while (true) {
 
         core_message_t msg;
@@ -126,7 +67,7 @@ static void core1_main(void)
             }
         }
 
-        core1_run_scheduled_tasks();
+        // TODO call scheduler here for core 1 tasks
 
         tight_loop_contents();
     }
@@ -141,7 +82,6 @@ void multicoreStart(void)
     queue_init(&core0_queue, sizeof(bool), 1);
 
     // Start core 1
-    core1_running = true;
     multicore_launch_core1(core1_main);
 }
 

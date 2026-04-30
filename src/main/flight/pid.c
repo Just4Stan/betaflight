@@ -26,13 +26,8 @@
 
 #include "platform.h"
 
-#include "build/assert_core.h"
 #include "build/build_config.h"
 #include "build/debug.h"
-
-#ifdef USE_SYSID
-#include "flight/sysid.h"
-#endif
 
 #include "common/axis.h"
 #include "common/filter.h"
@@ -1091,8 +1086,6 @@ NOINLINE static void applySpa(int axis, const pidProfile_t *pidProfile)
 // Based on 2DOF reference design (matlab)
 void FAST_CODE pidController(const pidProfile_t *pidProfile, timeUs_t currentTimeUs)
 {
-    ASSERT_CORE0(); // hard-realtime: PID loop must run on core0
-
     static float previousGyroRateDterm[XYZ_AXIS_COUNT];
     static float previousRawGyroRateDterm[XYZ_AXIS_COUNT];
 
@@ -1192,21 +1185,11 @@ void FAST_CODE pidController(const pidProfile_t *pidProfile, timeUs_t currentTim
 
     static int chirpAxis = 0;
     static bool shouldChirpAxisToggle = false;
-#ifdef USE_SYSID
-    static bool sysidWasActive = false;
-#endif
 
     float chirp = 0.0f;
     float sinarg = 0.0f;
     if (FLIGHT_MODE(CHIRP_MODE)) {
         shouldChirpAxisToggle = true;  // advance chirp axis on next !CHIRP_MODE
-#ifdef USE_SYSID
-        if (!sysidWasActive) {
-            // Rising edge: arm the sysid capture for the new axis.
-            sysidNotifyChirpStart(chirpAxis);
-            sysidWasActive = true;
-        }
-#endif
         // update chirp signal
         if (chirpUpdate(&pidRuntime.chirp)) {
             chirp = pidRuntime.chirp.exc;
@@ -1214,13 +1197,6 @@ void FAST_CODE pidController(const pidProfile_t *pidProfile, timeUs_t currentTim
         }
     } else {
         if (shouldChirpAxisToggle) {
-#ifdef USE_SYSID
-            // Falling edge: hand the captured ring off to the core1 worker.
-            // Done BEFORE incrementing chirpAxis so we notify the axis we
-            // were just chirping.
-            sysidNotifyChirpEnd(chirpAxis);
-            sysidWasActive = false;
-#endif
             // toggle chirp signal logic and increment to next axis for next run
             shouldChirpAxisToggle = false;
             chirpAxis = (++chirpAxis > FD_YAW) ? 0 : chirpAxis;
@@ -1317,20 +1293,6 @@ void FAST_CODE pidController(const pidProfile_t *pidProfile, timeUs_t currentTim
 #ifdef USE_CHIRP
         currentPidSetpoint += currentChirp;
 #endif // USE_CHIRP
-#if defined(USE_CHIRP) && defined(USE_SYSID)
-        // Capture (setpoint, filtered-gyro) for on-board system ID. We
-        // intentionally use the FILTERED gyro (gyroRate = gyro.gyroADCf)
-        // because that is what the rate controller acts on, and the
-        // deconvolution in sysid.c assumes unity feedback. The fit
-        // therefore recovers G·F (the airframe plant pre-multiplied by
-        // the gyro filter chain) — i.e. the "controller-facing plant",
-        // which is the right object to base PID-suggestion loop-shaping
-        // on. To recover the bare airframe G we'd also have to model
-        // gyro_lpf1, gyro_lpf2 and dyn_notch in C(jω); deferred.
-        if (axis == chirpAxis) {
-            sysidPushSample(axis, currentPidSetpoint, gyroRate);
-        }
-#endif
         float errorRate = currentPidSetpoint - gyroRate; // r - y
 #if defined(USE_ACC)
         handleCrashRecovery(

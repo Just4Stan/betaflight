@@ -1829,28 +1829,6 @@ static void osdElementAuxValue(osdElementParms_t *element)
     tfp_sprintf(element->buff, "%c%d", osdConfig()->aux_symbol, osdAuxValue);
 }
 
-#ifdef USE_SYSID
-#include "flight/sysid.h"
-static void osdElementSysidPid(osdElementParms_t *element)
-{
-    // Cycle the displayed axis once per second so all 3 fits become
-    // visible without taking 3 OSD slots.
-    const uint8_t ax = (uint8_t)((millis() / 1000u) % SYSID_AXIS_COUNT);
-    static const char axisChar[] = {'R', 'P', 'Y'};
-    sysid_result_t r;
-    if (!sysidGetResult(ax, &r)) {
-        tfp_sprintf(element->buff, "ID %c --/--/--", axisChar[ax]);
-        return;
-    }
-    int sp = 0, si = 0, sd = 0;
-    if (sysidSuggestPid(&r, &sp, &si, &sd)) {
-        tfp_sprintf(element->buff, "ID %c %d/%d/%d", axisChar[ax], sp, si, sd);
-    } else {
-        tfp_sprintf(element->buff, "ID %c reject", axisChar[ax]);
-    }
-}
-#endif
-
 static void osdElementWarnings(osdElementParms_t *element)
 {
     bool elementBlinking = false;
@@ -1986,9 +1964,6 @@ static const uint8_t osdElementDisplayOrder[] = {
     OSD_RATE_PROFILE_NAME,
     OSD_PID_PROFILE_NAME,
     OSD_BATTERY_PROFILE_NAME,
-#endif
-#ifdef USE_SYSID
-    OSD_SYSID_PID,
 #endif
 #ifdef USE_OSD_PROFILES
     OSD_PROFILE_NAME,
@@ -2127,9 +2102,6 @@ const osdElementDrawFn osdElementDrawFunction[OSD_ITEM_COUNT] = {
     [OSD_RATE_PROFILE_NAME]       = osdElementRateProfileName,
     [OSD_PID_PROFILE_NAME]        = osdElementPidProfileName,
     [OSD_BATTERY_PROFILE_NAME]    = osdElementBatteryProfileName,
-#ifdef USE_SYSID
-    [OSD_SYSID_PID]               = osdElementSysidPid,
-#endif
 #endif
 #ifdef USE_OSD_PROFILES
     [OSD_PROFILE_NAME]            = osdElementOsdProfileName,
