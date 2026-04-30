@@ -26,8 +26,8 @@
 
 #include "platform.h"
 
+#include "build/assert_core.h"
 #include "build/build_config.h"
-#include "build/core_affinity.h"
 #include "build/debug.h"
 
 #ifdef USE_SYSID
@@ -1318,9 +1318,15 @@ void FAST_CODE pidController(const pidProfile_t *pidProfile, timeUs_t currentTim
         currentPidSetpoint += currentChirp;
 #endif // USE_CHIRP
 #if defined(USE_CHIRP) && defined(USE_SYSID)
-        // Capture (setpoint, gyro) for on-board system ID. The sysid module
-        // is itself gated on capturing==true, which is set only between
-        // sysidNotifyChirpStart() and sysidNotifyChirpEnd() for this axis.
+        // Capture (setpoint, filtered-gyro) for on-board system ID. We
+        // intentionally use the FILTERED gyro (gyroRate = gyro.gyroADCf)
+        // because that is what the rate controller acts on, and the
+        // deconvolution in sysid.c assumes unity feedback. The fit
+        // therefore recovers G·F (the airframe plant pre-multiplied by
+        // the gyro filter chain) — i.e. the "controller-facing plant",
+        // which is the right object to base PID-suggestion loop-shaping
+        // on. To recover the bare airframe G we'd also have to model
+        // gyro_lpf1, gyro_lpf2 and dyn_notch in C(jω); deferred.
         if (axis == chirpAxis) {
             sysidPushSample(axis, currentPidSetpoint, gyroRate);
         }

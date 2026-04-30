@@ -31,6 +31,8 @@
 #include "common/maths.h"
 #include "drivers/time.h"
 
+#include "build/assert_core.h"
+
 #ifdef USE_MULTICORE
 #include "platform/multicore.h"
 #endif
@@ -52,27 +54,10 @@ void pgResetFn_sysidConfig(sysidConfig_t *cfg)
     memset(cfg, 0, sizeof(*cfg));
 }
 
-// ----- Capture ring -----
-//
-// Per-axis ring of (setpoint, gyro) pairs. Sized to hold ~30 s of data at
-// 4 kHz BB log rate (default `blackbox_sample_rate=1/2` on an 8 kHz PID
-// loop). Storage is the dominant cost of this module; tune SYSID_RING_LEN
-// down on memory-tight targets.
-
-// SHARED capture buffer across axes. The chirp generator processes one
-// axis at a time, so we only need one (u, y) pair in flight. Sized to hold
-// the full chirp window at a reduced capture rate via stride decimation
-// (we push every 4th gyro tick → 1 kHz capture rate at 4 kHz log rate).
-//   16384 samples × 2 buffers × 4 bytes = 128 KB
-//   16384 / 1000 Hz   ≈ 16 s — covers most of a 20 s chirp.
-// 8192 samples × 500 Hz capture rate = 16.4 s window. The chirp generator
-// does a logarithmic 0.5 → 400 Hz sweep over 20 s; 16.4 s covers 0.5 → ~150 Hz
-// which contains all the useful plant-identification bands. Nyquist 250 Hz
-// is well above anything we care about for rate-loop tuning. (Earlier
-// attempts at 1 kHz / 8 s only reached 7 Hz of the chirp before the buffer
-// filled, missing the plant resonance at ~18 Hz entirely.)
-#define SYSID_RING_LEN     8192u
-#define SYSID_PUSH_STRIDE  16      // decimate by 16 → 500 Hz capture from 8 kHz PID rate
+// SHARED single (u, y) capture buffer (chirp processes one axis at a time).
+// 4096 samples × 500 Hz = 8.2 s window. Memory cost: 32 KB BSS.
+#define SYSID_RING_LEN     4096u
+#define SYSID_PUSH_STRIDE  16      // 8 kHz PID → 500 Hz capture
 
 typedef struct {
     sysid_result_t result;
@@ -83,8 +68,17 @@ typedef struct {
 // the buffer right now.
 static FAST_DATA_ZERO_INIT float s_u_buf[SYSID_RING_LEN];
 static FAST_DATA_ZERO_INIT float s_y_buf[SYSID_RING_LEN];
-static volatile uint32_t s_buf_count = 0;
-static volatile uint32_t s_buf_head = 0;
+
+// PID + dterm-LPF snapshot taken at chirp-end. Captures the controller
+// state that was actually in effect during the chirp so deconvolution
+// uses those gains, not whatever the user happens to have set when the
+// compute eventually runs.
+typedef struct {
+    float Kp, Ki, Kd;
+    float dterm_lpf1_hz;
+} sysid_ctrl_snapshot_t;
+static FAST_DATA_ZERO_INIT sysid_ctrl_snapshot_t s_ctrl_snap;
+static volatile uint32_t s_buf_count = 0;  // also serves as write index — single producer (core0)
 static volatile uint8_t  s_capturing_axis = 0xff;
 static volatile uint8_t  s_computing_axis = 0xff;
 static volatile uint32_t s_push_skip = 0;
@@ -96,7 +90,11 @@ static FAST_DATA_ZERO_INIT sysid_axis_t s_axes[SYSID_AXIS_COUNT];
 #define SYSID_NFREQ          (SYSID_NEST / 2 + 1)
 #define SYSID_NOVERLAP_PCT   75
 #define SYSID_NOVERLAP       ((SYSID_NEST * SYSID_NOVERLAP_PCT) / 100)
-#define SYSID_FIT_FMIN_HZ    1.0f
+// Bumped from 1 Hz to 3 Hz: at the lowest 1-Hz bins T→1 (closed loop tracks
+// DC perfectly), so 1-T → 0 and deconvolution G = T/(C·(1-T)) is numerically
+// hostile even with a Dmag2 epsilon guard. Bin spacing at N=512, fs=500
+// is ~1 Hz so 3 Hz keeps ~50 usable bins below f_max=100 Hz.
+#define SYSID_FIT_FMIN_HZ    3.0f
 #define SYSID_FIT_FMAX_HZ    100.0f
 #define SYSID_FIT_COH_MIN    0.5f
 #define SYSID_LOG_RATE_HZ    500.0f    // = 8000 / SYSID_PUSH_STRIDE
@@ -133,13 +131,13 @@ static void sysid_compute_axis(int axis)
     const uint32_t t0 = micros();
     const uint32_t n = s_buf_count;
     if (n < (uint32_t)(SYSID_NEST + 64)) {
-        s_computing_axis = 0xff;
+        __atomic_store_n(&s_computing_axis, (uint8_t)0xff, __ATOMIC_RELEASE);
         return;
     }
 
     if (!s_fft_ctx) {
         // Should have been allocated in sysidInit on core0; bail safely.
-        s_computing_axis = 0xff;
+        __atomic_store_n(&s_computing_axis, (uint8_t)0xff, __ATOMIC_RELEASE);
         return;
     }
 
@@ -147,7 +145,7 @@ static void sysid_compute_axis(int axis)
     if (!welch_init(&w, SYSID_NEST, SYSID_NOVERLAP, s_fft_ctx,
                     s_win, s_seg, s_Ure, s_Uim, s_Yre, s_Yim,
                     s_Suu, s_Syu_re, s_Syu_im, s_Syy)) {
-        s_computing_axis = 0xff;
+        __atomic_store_n(&s_computing_axis, (uint8_t)0xff, __ATOMIC_RELEASE);
         return;
     }
 
@@ -162,11 +160,13 @@ static void sysid_compute_axis(int axis)
     // this, s_H_re / s_H_im hold the *plant* spectrum and the plant fit
     // is the rigid-body airframe model — not the closed-loop response.
     {
-        const pidProfile_t *pp = currentPidProfile;
-        const float Kp = pidRuntime.pidCoefficient[axis].Kp;
-        const float Ki = pidRuntime.pidCoefficient[axis].Ki;
-        const float Kd = pidRuntime.pidCoefficient[axis].Kd;
-        const float fc_d = (float)pp->dterm_lpf1_static_hz;
+        // Acquire-pair with the release in sysidNotifyChirpEnd so we read
+        // the gains that were active during the chirp.
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        const float Kp = s_ctrl_snap.Kp;
+        const float Ki = s_ctrl_snap.Ki;
+        const float Kd = s_ctrl_snap.Kd;
+        const float fc_d = s_ctrl_snap.dterm_lpf1_hz;
         const float twopi_fc_d = 6.28318530f * fc_d;
         // Skip the DC bin where T → 1 makes deconvolution singular.
         if (s_coh[0] < 1.0f) { s_H_re[0] = 0.0f; s_H_im[0] = 0.0f; }
@@ -223,15 +223,18 @@ static void sysid_compute_axis(int axis)
     const uint32_t dt = micros() - t0;
     s_last_compute_us = dt;
     if (dt > s_max_compute_us) s_max_compute_us = dt;
-    __atomic_thread_fence(__ATOMIC_RELEASE);
-    a->result_valid = 1;
-    s_computing_axis = 0xff;
+    // Release the result struct to readers, then clear the in-flight flag
+    // (also release-ordered so a polled "is computing?" never sees 0xff
+    // before the result_valid=1 it advertises).
+    __atomic_store_n(&a->result_valid, (uint8_t)1, __ATOMIC_RELEASE);
+    __atomic_store_n(&s_computing_axis, (uint8_t)0xff, __ATOMIC_RELEASE);
 }
 
 #ifdef USE_MULTICORE
 // core1-side worker: poll the pending axis flag, run compute, clear.
 static void sysid_core1_update(void)
 {
+    ASSERT_CORE1();
     uint8_t ax = __atomic_load_n(&s_pending_axis, __ATOMIC_ACQUIRE);
     if (ax >= SYSID_AXIS_COUNT) return;
     sysid_compute_axis((int)ax);
@@ -275,6 +278,11 @@ void sysidLoadFromConfig(void)
     for (int ax = 0; ax < SYSID_AXIS_COUNT; ax++) {
         if (c->persisted[ax].flags & SYSID_FLAG_VALID) {
             s_axes[ax].result = c->persisted[ax];
+            // Stale: the persisted timestamp is millis() from a previous
+            // boot. Zero it so the CLI age column shows "0" until the
+            // user runs a fresh chirp; otherwise (now - very_old_ts) is
+            // meaningless and may even underflow uint32 on cold boot.
+            s_axes[ax].result.timestamp_ms = 0;
             s_axes[ax].result_valid = 1;
         }
     }
@@ -358,7 +366,6 @@ void sysidInit(void)
     s_capturing_axis = 0xff;
     s_computing_axis = 0xff;
     s_buf_count = 0;
-    s_buf_head = 0;
     s_push_skip = 0;
     // Pre-allocate the FFT context on core0 so core1 never touches the
     // allocator. The pool inside sysid_fft.c is static; this just
@@ -375,15 +382,15 @@ void sysidInit(void)
 
 FAST_CODE void sysidPushSample(int axis, float setpoint, float gyroUnfilt)
 {
+    ASSERT_CORE0();
     if (axis < 0 || axis >= SYSID_AXIS_COUNT) return;
     if (s_capturing_axis != (uint8_t)axis) return;
     // Stride-decimate from PID rate (8 kHz) down to ~1 kHz capture rate.
     if (++s_push_skip < SYSID_PUSH_STRIDE) return;
     s_push_skip = 0;
     if (s_buf_count >= SYSID_RING_LEN) return;
-    s_u_buf[s_buf_head] = setpoint;
-    s_y_buf[s_buf_head] = gyroUnfilt;
-    s_buf_head++;
+    s_u_buf[s_buf_count] = setpoint;
+    s_y_buf[s_buf_count] = gyroUnfilt;
     s_buf_count++;
 }
 
@@ -398,9 +405,17 @@ void sysidNotifyChirpStart(int axis)
     if (__atomic_load_n(&s_computing_axis, __ATOMIC_ACQUIRE) != 0xff) {
         return;
     }
-    s_buf_head = 0;
+    // Snapshot the controller AT CHIRP START — these are the gains that
+    // were active during the chirp and that the deconvolution must use.
+    // Taking the snapshot at chirp END would let any user-driven gain
+    // change during the chirp leak into the deconvolution.
+    s_ctrl_snap.Kp           = pidRuntime.pidCoefficient[axis].Kp;
+    s_ctrl_snap.Ki           = pidRuntime.pidCoefficient[axis].Ki;
+    s_ctrl_snap.Kd           = pidRuntime.pidCoefficient[axis].Kd;
+    s_ctrl_snap.dterm_lpf1_hz = (float)currentPidProfile->dterm_lpf1_static_hz;
     s_buf_count = 0;
     s_push_skip = 0;
+    __atomic_thread_fence(__ATOMIC_RELEASE);
     __atomic_store_n(&s_capturing_axis, (uint8_t)axis, __ATOMIC_RELEASE);
 }
 
@@ -408,9 +423,9 @@ void sysidNotifyChirpEnd(int axis)
 {
     if (axis < 0 || axis >= SYSID_AXIS_COUNT) return;
     if (s_capturing_axis == (uint8_t)axis) {
-        s_capturing_axis = 0xff;
+        __atomic_store_n(&s_capturing_axis, (uint8_t)0xff, __ATOMIC_RELEASE);
     }
-    s_computing_axis = (uint8_t)axis;
+    __atomic_store_n(&s_computing_axis, (uint8_t)axis, __ATOMIC_RELEASE);
 #ifdef USE_MULTICORE
     __atomic_store_n(&s_pending_axis, (uint8_t)axis, __ATOMIC_RELEASE);
 #else
@@ -421,7 +436,9 @@ void sysidNotifyChirpEnd(int axis)
 bool sysidGetResult(int axis, sysid_result_t *out)
 {
     if (axis < 0 || axis >= SYSID_AXIS_COUNT || !out) return false;
-    if (!s_axes[axis].result_valid) return false;
+    // Acquire-pair with the release in sysid_compute_axis so we never see
+    // a result_valid=1 ahead of the struct payload it advertises.
+    if (!__atomic_load_n(&s_axes[axis].result_valid, __ATOMIC_ACQUIRE)) return false;
     *out = s_axes[axis].result;
     return true;
 }

@@ -2704,25 +2704,30 @@ static mspResult_e mspFcProcessOutCommandWithArg(mspDescriptor_t srcDesc, int16_
 #ifdef USE_SYSID
     case MSP2_SYSID_RESULT:
         {
-            // Payload: 3 axes × {K, wn_rad_s, zeta, rmse_db, suggested P/I/D, flags}
+            // Per-axis fixed-point payload (matches the rest of BF's MSP
+            // convention; no raw IEEE-754 over the wire). Scaling:
+            //   K        ×1000 → uint16  (typical 0.05 .. 50)
+            //   wn_rad_s ×10   → uint16  (typical 1 .. 600)
+            //   zeta     ×1000 → uint16  (typical 0.05 .. 5)
+            //   rmse_db  ×100  → uint16  (typical 0 .. 50 dB)
+            //   suggested P/I/D each as uint8 (BF's PID range fits)
+            //   flags as uint8, Nbands as uint16, iters as uint8, ts as uint32
             for (int ax = 0; ax < SYSID_AXIS_COUNT; ax++) {
                 sysid_result_t r;
-                bool got = sysidGetResult(ax, &r);
-                if (!got) memset(&r, 0, sizeof(r));
+                if (!sysidGetResult(ax, &r)) memset(&r, 0, sizeof(r));
                 int sp = 0, si = 0, sd = 0;
                 const bool gp = sysidSuggestPid(&r, &sp, &si, &sd);
-                uint32_t bits;
-                sbufWriteU8(dst, (uint8_t)ax);
-                memcpy(&bits, &r.K, 4);        sbufWriteU32(dst, bits);
-                memcpy(&bits, &r.wn_rad_s, 4); sbufWriteU32(dst, bits);
-                memcpy(&bits, &r.zeta, 4);     sbufWriteU32(dst, bits);
-                memcpy(&bits, &r.rmse_db, 4);  sbufWriteU32(dst, bits);
-                sbufWriteU8(dst, (uint8_t)(gp ? sp : 0));
-                sbufWriteU8(dst, (uint8_t)(gp ? si : 0));
-                sbufWriteU8(dst, (uint8_t)(gp ? sd : 0));
-                sbufWriteU8(dst, (uint8_t)r.flags);
+                sbufWriteU8 (dst, (uint8_t)ax);
+                sbufWriteU16(dst, (uint16_t)constrainf(r.K * 1000.0f, 0.0f, 65000.0f));
+                sbufWriteU16(dst, (uint16_t)constrainf(r.wn_rad_s * 10.0f, 0.0f, 65000.0f));
+                sbufWriteU16(dst, (uint16_t)constrainf(r.zeta * 1000.0f, 0.0f, 65000.0f));
+                sbufWriteU16(dst, (uint16_t)constrainf(r.rmse_db * 100.0f, 0.0f, 65000.0f));
+                sbufWriteU8 (dst, (uint8_t)(gp ? sp : 0));
+                sbufWriteU8 (dst, (uint8_t)(gp ? si : 0));
+                sbufWriteU8 (dst, (uint8_t)(gp ? sd : 0));
+                sbufWriteU8 (dst, (uint8_t)r.flags);
                 sbufWriteU16(dst, r.Nbands);
-                sbufWriteU8(dst,  r.iters);
+                sbufWriteU8 (dst, r.iters);
                 sbufWriteU32(dst, r.timestamp_ms);
             }
             break;

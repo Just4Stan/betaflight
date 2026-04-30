@@ -5913,7 +5913,11 @@ static void cliSysid(const char *cmdName, char *cmdline)
             continue;
         }
         const float wn_hz = r.wn_rad_s / (2.0f * 3.14159265f);
-        const uint32_t age = now - r.timestamp_ms;
+        // Saturate age display at ~16 minutes; values older than that are
+        // either persisted-from-EEPROM or the timestamp wrapped (49.7 day
+        // millis() rollover).
+        uint32_t age = now - r.timestamp_ms;
+        if (age > 1000000u) age = 999999u;
         int sp = 0, si = 0, sd = 0;
         const bool got = sysidSuggestPid(&r, &sp, &si, &sd);
         if (got) {

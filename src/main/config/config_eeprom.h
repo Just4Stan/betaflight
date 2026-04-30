@@ -23,7 +23,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define EEPROM_CONF_VERSION 178
+#define EEPROM_CONF_VERSION 179  // 178 → 179: PR-D adds OSD_SYSID_PID + sysidConfig
 
 bool isEEPROMVersionValid(void);
 bool isEEPROMStructureValid(void);

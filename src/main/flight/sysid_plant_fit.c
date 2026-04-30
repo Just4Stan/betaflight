@@ -103,6 +103,14 @@ bool plant_fit_initial_guess(const float *freq_hz,
     return true;
 }
 
+// File-local scratch for the band-of-interest index list. plant_fit_2nd_order
+// is called only from sysid_compute_axis on core1 and is not reentrant — a
+// 3 KB stack allocation here would risk overflowing the 4 KB core1 stack.
+enum { PLANT_FIT_MAX_BANDS = 128 };
+static int   s_pf_idx[PLANT_FIT_MAX_BANDS];
+static float s_pf_w[PLANT_FIT_MAX_BANDS];
+static float s_pf_y[PLANT_FIT_MAX_BANDS];
+
 bool plant_fit_2nd_order(const float *freq_hz,
                          const float *H_re, const float *H_im,
                          const float *coh,
@@ -111,12 +119,11 @@ bool plant_fit_2nd_order(const float *freq_hz,
                          float K0, float wn0, float zeta0,
                          plant_fit_t *out)
 {
-    // Build the band-of-interest index list once (offline-friendly cap).
-    enum { MAX_BANDS = 256 };
-    int   idx[MAX_BANDS];
-    float w_w[MAX_BANDS];   // weights = coh^2 (squared coherence used as weights)
-    float y[MAX_BANDS];     // log10|H_meas|
+    int   *idx = s_pf_idx;
+    float *w_w = s_pf_w;
+    float *y   = s_pf_y;
     int Nb = 0;
+    enum { MAX_BANDS = PLANT_FIT_MAX_BANDS };
     for (int k = 0; k < Nfreq && Nb < MAX_BANDS; k++) {
         const float f = freq_hz[k];
         if (f < f_min || f > f_max) continue;
@@ -153,7 +160,6 @@ bool plant_fit_2nd_order(const float *freq_hz,
         for (int n = 0; n < Nb; n++) {
             const int k = idx[n];
             const float f = freq_hz[k];
-            const float jK = 1.0f, jW = 1.0f, jZ = 1.0f; (void)jK; (void)jW; (void)jZ;
             float dK_, dwn_, dzeta_;
             log10_mag_grad(f, K, wn, zeta, &dK_, &dwn_, &dzeta_);
             const float ymodel = log10_mag_model(f, K, wn, zeta);

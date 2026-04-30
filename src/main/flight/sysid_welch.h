@@ -35,6 +35,14 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+// NAMING NOTE: this file (and sysid_plant_fit.{c,h}, sysid_fft.c) uses
+// snake_case for math API + helpers, while the orchestration layer
+// (sysid.{c,h}) uses BF's camelCase convention. The split is deliberate:
+// the math here is a direct port of pichim's MATLAB pipeline + standard
+// system-ID nomenclature, and snake_case keeps the cross-reference
+// readable. The boundary is sysid.c — anything called from BF code
+// (sysidInit, sysidPushSample, ...) is camelCase.
+
 // FFT backend handle. Backends define the struct.
 typedef struct welch_fft_ctx_s welch_fft_ctx_t;
 
