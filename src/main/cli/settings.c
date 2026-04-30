@@ -60,6 +60,9 @@
 #include "flight/failsafe.h"
 #include "flight/gps_rescue.h"
 #include "flight/imu.h"
+#ifdef USE_SYSID
+#include "flight/sysid.h"
+#endif
 #include "flight/mixer.h"
 #include "flight/pid.h"
 #include "flight/position.h"
@@ -1655,6 +1658,10 @@ const clivalue_t valueTable[] = {
 #endif
 #ifdef USE_SYSID
     { "osd_sysid_pid_pos",             VAR_UINT16  | MASTER_VALUE, .config.minmaxUnsigned = { 0, OSD_POSCFG_MAX }, PG_OSD_ELEMENT_CONFIG, offsetof(osdElementConfig_t, item_pos[OSD_SYSID_PID]) },
+    { "sysid_target_wc_dhz",           VAR_UINT16  | MASTER_VALUE, .config.minmaxUnsigned = { 50, 600 },           PG_SYSID_CONFIG,       offsetof(sysidConfig_t, target_wc_dHz) },
+    { "sysid_fit_fmin_dhz",            VAR_UINT16  | MASTER_VALUE, .config.minmaxUnsigned = { 5, 200 },            PG_SYSID_CONFIG,       offsetof(sysidConfig_t, fit_fmin_dHz) },
+    { "sysid_fit_fmax_dhz",            VAR_UINT16  | MASTER_VALUE, .config.minmaxUnsigned = { 100, 2000 },         PG_SYSID_CONFIG,       offsetof(sysidConfig_t, fit_fmax_dHz) },
+    { "sysid_fit_min_coherence",       VAR_UINT8   | MASTER_VALUE, .config.minmaxUnsigned = { 0, 100 },            PG_SYSID_CONFIG,       offsetof(sysidConfig_t, fit_min_coherence) },
 #endif
 
 #ifdef USE_OSD_PROFILES
