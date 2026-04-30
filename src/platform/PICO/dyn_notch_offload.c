@@ -145,17 +145,22 @@ static void runJob(const dynNotchOffloadJob_t *j)
         }
     }
 
-    // Publish result (single writer = core1; reader = core0).
+    // Drop the result if core0 hasn't consumed the previous one yet:
+    // overwriting in place would tear the consumer's mid-copy and would
+    // also silently lose a result already published. Stale dyn_notch
+    // updates are fine to drop -- the next chirp segment supersedes.
     axisResult_t *r = &s_results[j->axis];
+    if (__atomic_load_n(&r->ready, __ATOMIC_ACQUIRE) != 0u) {
+        return;
+    }
     for (int p = 0; p < count; p++) {
         r->result.peakBins[p] = peakBins[p];
         r->result.centerFreqOut[p] = centerFreqOut[p];
     }
     r->result.maxCenterFreq = maxCenterFreq;
 
-    // Release fence so core0 sees the payload before the ready flag.
-    __atomic_thread_fence(__ATOMIC_RELEASE);
-    __atomic_store_n(&r->ready, 1u, __ATOMIC_RELAXED);
+    // Release-store publishes the payload to core0 atomically.
+    __atomic_store_n(&r->ready, 1u, __ATOMIC_RELEASE);
 }
 
 static void core1Update(void)
@@ -170,8 +175,7 @@ static void core1Update(void)
         runJob(&js->job);
 
         // Release the slot back to the producer pool.
-        __atomic_thread_fence(__ATOMIC_RELEASE);
-        __atomic_store_n(&js->in_use, 0u, __ATOMIC_RELAXED);
+        __atomic_store_n(&js->in_use, 0u, __ATOMIC_RELEASE);
     }
 }
 
@@ -224,7 +228,8 @@ bool dynNotchOffloadPost(const dynNotchOffloadJob_t *job)
     }
     s_slots[slotIdx].job = *job;
 
-    __atomic_thread_fence(__ATOMIC_RELEASE);
+    // The release-store on r->head inside core1_ring_push already orders
+    // the job-payload write above before the consumer observes the new tail.
     if (!core1_ring_push(&s_ring, (core1_ring_slot_t)(slotIdx + 1))) {
         // Roll back the slot reservation.
         __atomic_store_n(&s_slots[slotIdx].in_use, 0u, __ATOMIC_RELAXED);
@@ -239,6 +244,10 @@ bool dynNotchOffloadPoll(int axis, dynNotchOffloadResult_t *out)
         return false;
     }
     axisResult_t *r = &s_results[axis];
+    // Single-reader (core0) so a load + plain copy + release-store is
+    // race-free against the single-writer (core1) WHEN runJob also drops
+    // on ready != 0 (see runJob above): producer never overwrites a
+    // payload while the consumer is mid-copy.
     if (__atomic_load_n(&r->ready, __ATOMIC_ACQUIRE) == 0u) {
         return false;
     }

@@ -1,5 +1,5 @@
 /*
- * FFT backend for sysid_welch — radix-2 in-place complex FFT, then
+ * FFT backend for sysid_welch -- radix-2 in-place complex FFT, then
  * extracts the first N/2+1 bins of the real-input spectrum.
  *
  * For real input x[0..N-1], we run a full N-point CFFT (with the imaginary
@@ -79,7 +79,7 @@ welch_fft_ctx_t *welch_fft_create(int N) {
 }
 
 void welch_fft_destroy(welch_fft_ctx_t *ctx) {
-    // Static pool — nothing to free. Keep the symbol so non-PICO code paths
+    // Static pool -- nothing to free. Keep the symbol so non-PICO code paths
     // (offline host validation) that pair create/destroy still link.
     (void)ctx;
 }

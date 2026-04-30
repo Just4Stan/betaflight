@@ -159,10 +159,16 @@ static FAST_DATA_ZERO_INIT float   pt1LooptimeS;
 // posted to core1 right after STEP_WINDOW completes; the inline state
 // machine path is skipped for those two steps and STEP_UPDATE_FILTERS polls
 // the published result before applying notch coefficient updates.
+//
+// State + branches are gated on USE_MULTICORE so non-multicore targets
+// (STM32H743, single-core PICO2_2350A) don't pay the ~700 B text +
+// ~212 B bss cost of carrying the offload path through dead-strip.
+#if defined(USE_MULTICORE) && defined(USE_DYN_NOTCH_FILTER)
 static FAST_DATA_ZERO_INIT bool   offloadActive;
 static FAST_DATA_ZERO_INIT bool   offloadPosted[XYZ_AXIS_COUNT];
 static FAST_DATA_ZERO_INIT dynNotchOffloadResult_t offloadResult[XYZ_AXIS_COUNT];
 static FAST_DATA_ZERO_INIT bool   offloadResultPending[XYZ_AXIS_COUNT];
+#endif
 
 void dynNotchInit(const dynNotchConfig_t *config, const timeUs_t targetLooptimeUs)
 {
@@ -211,14 +217,18 @@ void dynNotchInit(const dynNotchConfig_t *config, const timeUs_t targetLooptimeU
             dynNotch.centerFreq[axis][p] = (p + 0.5f) * (dynNotch.maxHz - dynNotch.minHz) / (float)dynNotch.count + dynNotch.minHz;
             biquadFilterInit(&dynNotch.notch[axis][p], dynNotch.centerFreq[axis][p], dynNotch.looptimeUs, dynNotch.q, FILTER_NOTCH, 1.0f);
         }
+#if defined(USE_MULTICORE) && defined(USE_DYN_NOTCH_FILTER)
         offloadPosted[axis] = false;
         offloadResultPending[axis] = false;
+#endif
     }
 
-    // Try to register the core1 offload. If registration fails (e.g. on a
-    // non-multicore build, or when the scheduled-task table is full), the
-    // inline state-machine path stays in use.
+#if defined(USE_MULTICORE) && defined(USE_DYN_NOTCH_FILTER)
+    // Try to register the core1 offload. If registration fails (e.g. when
+    // the scheduled-task table is full), the inline state-machine path
+    // stays in use.
     offloadActive = dynNotchOffloadInit();
+#endif
 }
 
 // Collect gyro data, to be downsampled and analysed in dynNotchUpdate() function
@@ -289,6 +299,7 @@ static FAST_CODE_NOINLINE void dynNotchProcess(void)
                 sdftNoiseThreshold += sdftData[bin];  // sdftData contains power spectral density
             }
 
+#if defined(USE_MULTICORE) && defined(USE_DYN_NOTCH_FILTER)
             // If the core1 offload is active, hand off STEP_DETECT_PEAKS and
             // STEP_CALC_FREQUENCIES to core1; the inline path will skip them
             // and STEP_UPDATE_FILTERS will poll for the result.
@@ -313,6 +324,7 @@ static FAST_CODE_NOINLINE void dynNotchProcess(void)
                 offloadPosted[state.axis] = dynNotchOffloadPost(&job);
                 offloadResultPending[state.axis] = offloadPosted[state.axis];
             }
+#endif
 
             DEBUG_SET(DEBUG_FFT_TIME, 1, micros() - startTime);
 
@@ -320,11 +332,13 @@ static FAST_CODE_NOINLINE void dynNotchProcess(void)
         }
         case STEP_DETECT_PEAKS: // 5.5us (4-7us) @ F722
         {
+#if defined(USE_MULTICORE) && defined(USE_DYN_NOTCH_FILTER)
             if (offloadPosted[state.axis]) {
                 // Detect runs on core1; nothing to do on core0 for this axis.
                 DEBUG_SET(DEBUG_FFT_TIME, 1, micros() - startTime);
                 break;
             }
+#endif
             // Get memory ready for new peak data on current axis
             for (int p = 0; p < dynNotch.count; p++) {
                 peaks[p].bin = 0;
@@ -370,11 +384,13 @@ static FAST_CODE_NOINLINE void dynNotchProcess(void)
         }
         case STEP_CALC_FREQUENCIES: // 4.0us (2-7us) @ F722
         {
+#if defined(USE_MULTICORE) && defined(USE_DYN_NOTCH_FILTER)
             if (offloadPosted[state.axis]) {
                 // Frequency calc runs on core1; nothing to do on core0 for this axis.
                 DEBUG_SET(DEBUG_FFT_TIME, 1, micros() - startTime);
                 break;
             }
+#endif
 
             // Approximate noise floor (= average power spectral density in dyn notch range, excluding peaks)
             int peakCount = 0;
@@ -441,6 +457,7 @@ static FAST_CODE_NOINLINE void dynNotchProcess(void)
         }
         case STEP_UPDATE_FILTERS: // 5.4us (2-9us) @ F722
         {
+#if defined(USE_MULTICORE) && defined(USE_DYN_NOTCH_FILTER)
             if (offloadPosted[state.axis]) {
                 // Drain the result published by core1. If it isn't ready
                 // yet, skip the update on this cycle - we use the previously
@@ -473,7 +490,9 @@ static FAST_CODE_NOINLINE void dynNotchProcess(void)
                     }
                 }
                 offloadPosted[state.axis] = false;
-            } else {
+            } else
+#endif
+            {
                 for (int p = 0; p < dynNotch.count; p++) {
                     // Only update notch filter coefficients if the corresponding peak got its center frequency updated in the previous step
                     if (peaks[p].bin != 0 && peaks[p].value > sdftNoiseThreshold) {

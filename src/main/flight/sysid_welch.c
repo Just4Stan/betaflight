@@ -1,5 +1,5 @@
 /*
- * Welch H1 estimator + MSC coherence — algorithm body.
+ * Welch H1 estimator + MSC coherence -- algorithm body.
  * See sysid_welch.h.
  */
 
@@ -16,7 +16,7 @@
 #define M_PI 3.14159265358979323846f
 #endif
 
-static void hann_periodic(float *w, int N) {
+void welch_compute_hann(float *w, int N) {
     for (int k = 0; k < N; k++) {
         w[k] = 0.5f * (1.0f - cosf(2.0f * (float)M_PI * (float)k / (float)N));
     }
@@ -45,7 +45,7 @@ bool welch_init(welch_t *w, int N, int noverlap, welch_fft_ctx_t *fft,
     w->Syu_re = buf_Syu_re; w->Syu_im = buf_Syu_im;
     w->Syy = buf_Syy;
 
-    hann_periodic(w->win, N);
+    // Caller must have pre-populated buf_win via welch_compute_hann.
 
     double s = 0.0;
     for (int i = 0; i < N; i++) s += (double)w->win[i];

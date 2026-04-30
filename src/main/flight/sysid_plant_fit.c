@@ -27,7 +27,7 @@ static inline float log10_mag_model(float f, float K, float wn, float zeta) {
 }
 
 // Partials of log10|H| w.r.t. (logK, wn, zeta). We parameterise with logK
-// (instead of K) because the residual is in log-magnitude — equal step in
+// (instead of K) because the residual is in log-magnitude -- equal step in
 // logK == equal step in dB, gives a much better-conditioned Jacobian.
 //
 // d(log10|H|)/d(logK) = ln(10) factor cancels: d(log10 K)/d(logK) = 1/ln(10) ... actually:
@@ -104,7 +104,7 @@ bool plant_fit_initial_guess(const float *freq_hz,
 }
 
 // File-local scratch for the band-of-interest index list. plant_fit_2nd_order
-// is called only from sysid_compute_axis on core1 and is not reentrant — a
+// is called only from sysid_compute_axis on core1 and is not reentrant -- a
 // 3 KB stack allocation here would risk overflowing the 4 KB core1 stack.
 enum { PLANT_FIT_MAX_BANDS = 128 };
 static int   s_pf_core1_idx[PLANT_FIT_MAX_BANDS];
@@ -146,7 +146,7 @@ bool plant_fit_2nd_order(const float *freq_hz,
     float wn   = wn0;
     float zeta = zeta0;
 
-    // Clean data converges in 8–12 iters; pathological data wastes compute
+    // Clean data converges in 8-12 iters; pathological data wastes compute
     // without converging on a meaningful answer. 30 is a generous budget.
     const int   max_iter = 30;
     const float tol_step = 5e-5f;
@@ -184,7 +184,7 @@ bool plant_fit_2nd_order(const float *freq_hz,
         JtWJ[2][0] = JtWJ[0][2];
         JtWJ[2][1] = JtWJ[1][2];
 
-        // Levenberg damping (mild: λ = 1e-3 * trace/3 — keeps things stable)
+        // Levenberg damping (mild: lam = 1e-3 * trace/3 -- keeps things stable)
         const float lam = 1.0e-3f * (JtWJ[0][0] + JtWJ[1][1] + JtWJ[2][2]) / 3.0f + 1e-12f;
         JtWJ[0][0] += lam;
         JtWJ[1][1] += lam;

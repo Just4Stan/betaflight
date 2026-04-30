@@ -1,5 +1,5 @@
 /*
- * Welch H1 estimator + MSC coherence — minimal C port of pichim's
+ * Welch H1 estimator + MSC coherence -- minimal C port of pichim's
  * `estimate_frequency_response()` from bf_controller_tuning.
  *
  * Targets:
@@ -40,7 +40,7 @@
 // (sysid.{c,h}) uses BF's camelCase convention. The split is deliberate:
 // the math here is a direct port of pichim's MATLAB pipeline + standard
 // system-ID nomenclature, and snake_case keeps the cross-reference
-// readable. The boundary is sysid.c — anything called from BF code
+// readable. The boundary is sysid.c -- anything called from BF code
 // (sysidInit, sysidPushSample, ...) is camelCase.
 
 // FFT backend handle. Backends define the struct.
@@ -73,8 +73,14 @@ typedef struct {
     int   Navg;
 } welch_t;
 
+// Pre-compute a periodic Hann window into w[0..N-1]. Caller-allocated.
+// Separated from welch_init so cosf() runs once at boot, not on the PID
+// task at chirp start (was a 300-600 us spike on RP2350 at N=512).
+void welch_compute_hann(float *w, int N);
+
 // Returns false on bad N or backend init failure. All buffer pointers are
-// caller-owned. Hann window is filled at init.
+// caller-owned. buf_win MUST already contain the Hann window at call time
+// (see welch_compute_hann).
 bool welch_init(welch_t *w, int N, int noverlap, welch_fft_ctx_t *fft,
                 float *buf_win, float *buf_seg,
                 float *buf_Ure, float *buf_Uim,

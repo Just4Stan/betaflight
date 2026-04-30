@@ -84,7 +84,7 @@ void sysidNotifyChirpStart(int axis);
 void sysidNotifyChirpEnd(int axis);
 
 // Consumer (any core, read-only). Returns true if a fresh result is
-// available; copies it into *out if so. Result is sticky — calling
+// available; copies it into *out if so. Result is sticky -- calling
 // repeatedly returns the same data until a new chirp completes.
 bool sysidGetResult(int axis, sysid_result_t *out);
 
@@ -102,14 +102,15 @@ uint32_t sysidCaptureCount(void);
 uint32_t sysidLastComputeUs(void);
 uint32_t sysidMaxComputeUs(void);
 
-// Synchronous compute trigger for testing — runs Welch + plant fit on
+// Synchronous compute trigger for testing -- runs Welch + plant fit on
 // whatever's currently in the shared buffer. Steals time from the calling
 // core; do not call from a hard-realtime path.
 void sysidComputeNow(int axis);
 
 // Map a 2nd-order rigid-body fit to suggested PID gains. The mapping is a
-// simple loop-shaping rule (target crossover at 0.7 ωn, target phase
-// margin 50°). Returns false if the fit is unfit-for-suggestion (failed
-// convergence, low Nbands, or unrealistic params).
+// simple loop-shaping rule (target crossover at 0.5*wn clamped to 60-200
+// rad/s, target phase margin ~50 deg). Returns false if the fit is
+// unfit-for-suggestion (failed convergence, low Nbands, or unrealistic
+// params).
 bool sysidSuggestPid(const sysid_result_t *fit,
                      int *out_p, int *out_i, int *out_d);

@@ -45,7 +45,7 @@ static queue_t core1_queue;
 // multicoreExecuteBlocking() is what dispatches initPhase1/2/3 onto
 // core1 to begin with).
 //
-// CONCURRENCY MODEL — single producer, single consumer:
+// CONCURRENCY MODEL -- single producer, single consumer:
 //   - Producer: core0 only. All BF init paths that register tasks run
 //     either before multicoreStart() or inside initPhaseN which is
 //     itself dispatched serially via multicoreExecuteBlocking. There is
@@ -58,7 +58,7 @@ static queue_t core1_queue;
 //
 // If a future caller wants concurrent registrations from core1 or from
 // multiple core0 contexts, this needs a CAS on the count plus a write
-// barrier — at which point a small spinlock would be cleaner than the
+// barrier -- at which point a small spinlock would be cleaner than the
 // current relaxed-atomic dance.
 
 static const multicore_task_t *scheduled_tasks[MULTICORE_MAX_TASKS];

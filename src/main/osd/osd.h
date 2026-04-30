@@ -202,6 +202,14 @@ typedef enum {
     OSD_CUSTOM_SERIAL_TEXT,
     OSD_BATTERY_PROFILE_NAME,
 
+    // OSD_SYSID_PID lives BEFORE the conditional WP block so its positional
+    // ABI value is stable regardless of (USE_GPS && ENABLE_FLIGHT_PLAN). WP
+    // values are already build-conditional, so no external consumer can rely
+    // on a fixed integer for them. Render + active-list entries for SYSID_PID
+    // are gated on USE_SYSID; on builds without it the slot exists but never
+    // renders.
+    OSD_SYSID_PID,
+
 #if defined(USE_GPS) && ENABLE_FLIGHT_PLAN
     // Waypoint elements
     OSD_WP_NUMBER,              // "WP 3/12" - current/total
@@ -213,13 +221,6 @@ typedef enum {
     OSD_WP_NEXT_NUMBER,         // "NEXT 4" - next waypoint number
     OSD_WP_ETA,                 // Estimated time to waypoint
 #endif
-    // OSD_SYSID_PID is appended AFTER the conditional waypoint block so
-    // that adding it doesn't shift any pre-existing enum value on builds
-    // that include the waypoints. Render + active-list entries are gated
-    // on USE_SYSID; on builds without USE_SYSID the slot exists but never
-    // renders. EEPROM_CONF_VERSION must bump whenever this list grows so
-    // older saved item_pos[] arrays don't read past their end.
-    OSD_SYSID_PID,
 
     OSD_ITEM_COUNT // MUST BE LAST
 } osd_items_e;
