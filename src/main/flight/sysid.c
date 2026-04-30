@@ -129,8 +129,13 @@ static void sysid_compute_axis(int axis)
     if (axis < 0 || axis >= SYSID_AXIS_COUNT) return;
     sysid_axis_t *a = &s_axes[axis];
     const uint32_t t0 = micros();
-    const uint32_t n = s_buf_count;
-    if (n < (uint32_t)(SYSID_NEST + 64)) {
+    // Refuse to fit on near-empty buffers. With N=512 and 75 % overlap each
+    // additional 128 samples adds one Welch segment; require ≥ 5 segments
+    // (= 5·128 + 512 = 1152, rounded up to 1536) so the MSC estimate has
+    // statistical meaning. A half-aborted chirp would otherwise produce a
+    // "Navg=1" fit where coherence is identically 1 by construction.
+    const uint32_t n = __atomic_load_n(&s_buf_count, __ATOMIC_ACQUIRE);
+    if (n < (uint32_t)(SYSID_NEST + 8 * (SYSID_NEST - SYSID_NOVERLAP))) {
         __atomic_store_n(&s_computing_axis, (uint8_t)0xff, __ATOMIC_RELEASE);
         return;
     }
@@ -264,10 +269,14 @@ uint32_t sysidMaxComputeUs(void)  { return s_max_compute_us; }
 
 void sysidCommitToConfig(void)
 {
+    // Use sysidGetResult so the read is acquire-ordered against core1's
+    // release-store; otherwise a save issued mid-compute can persist a
+    // half-written struct.
     sysidConfig_t *c = sysidConfigMutable();
     for (int ax = 0; ax < SYSID_AXIS_COUNT; ax++) {
-        if (s_axes[ax].result_valid) {
-            c->persisted[ax] = s_axes[ax].result;
+        sysid_result_t r;
+        if (sysidGetResult(ax, &r)) {
+            c->persisted[ax] = r;
         }
     }
 }
@@ -324,10 +333,16 @@ bool sysidSuggestPid(const sysid_result_t *fit, int *out_p, int *out_i, int *out
     if (fit->wn_rad_s < 1.0f || fit->wn_rad_s > 600.0f) return false;
     if (fit->zeta < 0.05f || fit->zeta > 5.0f) return false;
 
-    static const float WC_TARGET_RAD_S = 125.66f;  // 20 Hz, sensible for 3-5" quads
-
-    const float wc  = WC_TARGET_RAD_S;
+    // Target crossover scales with the identified plant resonance: pick
+    // wc = 0.5·ωn so the controller works WITH the plant rather than
+    // muscling past it, but clamp to 60–200 rad/s (≈ 9.5–32 Hz) so a
+    // tinywhoop with ωn=400 rad/s and a 7" cinelifter with ωn=80 rad/s
+    // both end up with sane absolute targets. Hardcoded 20 Hz before this
+    // change was good for 3–5" stiff frames only.
     const float wn  = fit->wn_rad_s;
+    float wc = 0.5f * wn;
+    if (wc < 60.0f)  wc = 60.0f;
+    if (wc > 200.0f) wc = 200.0f;
     const float K_g = fit->K;
     const float zeta = fit->zeta;
 
@@ -412,7 +427,16 @@ void sysidNotifyChirpStart(int axis)
     s_ctrl_snap.Kp           = pidRuntime.pidCoefficient[axis].Kp;
     s_ctrl_snap.Ki           = pidRuntime.pidCoefficient[axis].Ki;
     s_ctrl_snap.Kd           = pidRuntime.pidCoefficient[axis].Kd;
-    s_ctrl_snap.dterm_lpf1_hz = (float)currentPidProfile->dterm_lpf1_static_hz;
+    // BF stock profile uses dynamic dterm LPF1 (cutoff slides between
+    // dyn_min and dyn_max with throttle). The chirp typically runs near
+    // hover throttle, so use the midpoint as a representative cutoff.
+    // Static-only profiles set dyn_min=0; fall back to dterm_lpf1_static_hz.
+    if (pidRuntime.dynLpfMin > 0) {
+        s_ctrl_snap.dterm_lpf1_hz =
+            0.5f * ((float)pidRuntime.dynLpfMin + (float)pidRuntime.dynLpfMax);
+    } else {
+        s_ctrl_snap.dterm_lpf1_hz = (float)currentPidProfile->dterm_lpf1_static_hz;
+    }
     s_buf_count = 0;
     s_push_skip = 0;
     __atomic_thread_fence(__ATOMIC_RELEASE);
