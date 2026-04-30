@@ -57,9 +57,14 @@ void multicoreExecuteBlocking(core1_func_t *func);
 // return). Tasks remain registered for the lifetime of the firmware run.
 //
 // API contract:
-//   - multicoreScheduleTask() must be called before multicoreStart() (i.e.
-//     during BF init, before core1 is launched). Calls after the core has
-//     started are ignored to keep the consumer-side data structures lockless.
+//   - multicoreScheduleTask() may be called any time, including AFTER
+//     multicoreStart(). The original "register before start" rule was
+//     relaxed once it became clear every BF init phase runs via
+//     multicoreExecuteBlocking after core1 has launched. The relaxation
+//     is single-producer (core0) / single-consumer (core1): slots are
+//     write-once, the count is monotonic-increment via atomic store
+//     with release ordering, core1 reads with acquire. See multicore.c
+//     for the full concurrency note.
 //   - The total number of registered tasks is bounded (MULTICORE_MAX_TASKS).
 //   - Tasks must be reentrancy-safe with their own producer side; the ring
 //     primitives in core1_ring.h provide the SPSC pattern.
