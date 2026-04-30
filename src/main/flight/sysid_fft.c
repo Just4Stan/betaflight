@@ -53,6 +53,12 @@ welch_fft_ctx_t *welch_fft_create(int N) {
     if (N <= 0 || (N & (N - 1)) != 0) return NULL;
     if (N > SYSID_FFT_NMAX) return NULL;
     welch_fft_ctx_t *ctx = &s_ctx_pool;
+    if (s_ctx_initialised && ctx->N != N) {
+        // Pool is single-instance: a second caller asking for a different N
+        // would silently clobber the first caller's twiddle tables. Fail
+        // loud rather than corrupt.
+        return NULL;
+    }
     if (s_ctx_initialised && ctx->N == N) {
         return ctx;
     }
