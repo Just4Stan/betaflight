@@ -3570,6 +3570,35 @@ static mspResult_e mspProcessInCommand(mspDescriptor_t srcDesc, int16_t cmdMSP, 
 #endif
 
         break;
+#ifdef USE_SYSID
+    case MSP2_SET_SYSID_CMD: {
+        // Single byte payload: 0=wipe persisted history, 1=force compute on
+        // axis (next byte), 2=apply suggestion to current PID profile (next
+        // byte = axis). Refused while armed for safety on action 2.
+        if (sbufBytesRemaining(src) < 1) return MSP_RESULT_ERROR;
+        const uint8_t op = sbufReadU8(src);
+        switch (op) {
+        case 0:
+            sysidWipeHistory();
+            break;
+        case 1: {
+            const uint8_t ax = (sbufBytesRemaining(src) >= 1) ? sbufReadU8(src) : 1;
+            sysidComputeNow(ax);
+            break;
+        }
+        case 2: {
+            if (ARMING_FLAG(ARMED)) return MSP_RESULT_ERROR;
+            const uint8_t ax = (sbufBytesRemaining(src) >= 1) ? sbufReadU8(src) : 1;
+            if (!sysidApplySuggestion(ax)) return MSP_RESULT_ERROR;
+            break;
+        }
+        default:
+            return MSP_RESULT_ERROR;
+        }
+        break;
+    }
+#endif
+
     case MSP_EEPROM_WRITE:
         if (ARMING_FLAG(ARMED)) {
             return MSP_RESULT_ERROR;

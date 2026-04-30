@@ -1,7 +1,28 @@
 /*
- * 2nd-order rigid-body plant fit, Gauss-Newton on coherence-weighted
- * log-magnitude. See sysid_plant_fit.h.
+ * This file is part of Betaflight.
+ *
+ * Betaflight is free software. You can redistribute this software
+ * and/or modify this software under the terms of the GNU General
+ * Public License as published by the Free Software Foundation,
+ * either version 3 of the License, or (at your option) any later
+ * version.
+ *
+ * Betaflight is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ *
+ * See the GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public
+ * License along with this software.
+ *
+ * If not, see <http://www.gnu.org/licenses/>.
  */
+
+// 2nd-order rigid-body plant fit via Gauss-Newton on coherence-weighted
+// log-magnitude. Adapted from pichim's MATLAB
+// `calculate_step_response_from_frd.m` and `lib/get_fcut_from_*.m`
+// (GPL-3.0). See sysid_plant_fit.h for the public API.
 
 #include "platform.h"
 
@@ -75,26 +96,32 @@ bool plant_fit_initial_guess(const float *freq_hz,
                              int Nfreq, float f_low,
                              float *K0, float *wn0, float *zeta0)
 {
-    // K0 = mean |H| over bins with f <= f_low and coh > 0.5
-    double K_acc = 0.0;
+    // K0 = geometric mean of |H| over low-frequency bins with coh > 0.5,
+    // computed as mean(log10|H|) → 10^mean. Matches the log-domain
+    // residual that the GN fit minimises later, so the initial guess
+    // and the optimum live in the same space (linear-mean-of-magnitudes
+    // would bias K0 high in noise-dominated bins).
+    double logK_acc = 0.0;
     int    K_n = 0;
     for (int k = 0; k < Nfreq; k++) {
         if (freq_hz[k] > f_low) break;
         if (coh[k] > 0.5f) {
             const float m = sqrtf(H_re[k]*H_re[k] + H_im[k]*H_im[k]);
-            K_acc += (double)m; K_n++;
+            if (m > 0.0f) { logK_acc += (double)log10f(m); K_n++; }
         }
     }
     if (K_n < 2) return false;
-    *K0 = (float)(K_acc / (double)K_n);
+    *K0 = (float)pow(10.0, logK_acc / (double)K_n);
 
-    // wn0 = freq where |H| drops 3 dB below K0 (linear scan from low to high)
+    // wn0 = freq where |H| first drops 3 dB below K0. Scan from HIGH to
+    // LOW so that for a 2nd-order LP the rolloff is found at the corner
+    // (low-to-high scan would lock onto the first dip at any noise floor).
     const float thresh = (*K0) * 0.70794578f;  // -3 dB linear
-    *wn0 = 2.0f * (float)M_PI * freq_hz[Nfreq - 1] * 0.1f;  // fallback: low default
-    for (int k = 0; k < Nfreq; k++) {
+    *wn0 = 2.0f * (float)M_PI * freq_hz[Nfreq - 1] * 0.1f;  // fallback
+    for (int k = Nfreq - 1; k >= 0; k--) {
         if (coh[k] < 0.3f) continue;
         const float m = sqrtf(H_re[k]*H_re[k] + H_im[k]*H_im[k]);
-        if (m < thresh) {
+        if (m >= thresh) {
             *wn0 = 2.0f * (float)M_PI * freq_hz[k];
             break;
         }
@@ -145,13 +172,37 @@ bool plant_fit_2nd_order(const float *freq_hz,
     float logK = log10f(fabsf(K0) + 1e-12f);
     float wn   = wn0;
     float zeta = zeta0;
+    // Adaptive Levenberg damping. lam grows on uphill rejection, shrinks
+    // on accepted improvement. Standard trust-region semantics with the
+    // Marquardt correction (multiplicative on the diagonal).
+    float lam_lm = 1.0e-3f;
 
     // Clean data converges in 8–12 iters; pathological data wastes compute
     // without converging on a meaningful answer. 30 is a generous budget.
-    const int   max_iter = 30;
-    const float tol_step = 5e-5f;
+    const int   max_iter   = 30;
+    // Per-parameter convergence tolerances. logK and zeta are unitless so
+    // an absolute tolerance is meaningful; wn is a frequency in rad/s so
+    // we use a relative tolerance against wn itself. Earlier all-in-one
+    // 5e-5 mixed dimensions and was unreachable on real data — GN hit
+    // max_iter every time even on textbook inputs.
+    const float tol_logK   = 1e-3f;   // ~0.02 dB step
+    const float tol_zeta   = 5e-3f;
+    const float tol_wn_rel = 5e-3f;   // 0.5 % of current wn
     int it = 0;
     bool converged = false;
+
+    // Compute the weighted SSE at a (logK,wn,zeta) point.
+    #define COMPUTE_SSE(_logK, _wn, _zeta) ({                                  \
+        const float _K = powf(10.0f, (_logK));                                 \
+        double _sse = 0.0;                                                     \
+        for (int _n = 0; _n < Nb; _n++) {                                      \
+            const int _k = idx[_n];                                            \
+            const float _r = y[_n] - log10_mag_model(freq_hz[_k], _K, (_wn), (_zeta)); \
+            _sse += (double)w_w[_n] * (double)(_r * _r);                       \
+        }                                                                      \
+        _sse; })
+
+    double sse_curr = COMPUTE_SSE(logK, wn, zeta);
 
     for (it = 0; it < max_iter; it++) {
         // J^T W J  is 3x3, J^T W r is 3x1.
@@ -184,11 +235,16 @@ bool plant_fit_2nd_order(const float *freq_hz,
         JtWJ[2][0] = JtWJ[0][2];
         JtWJ[2][1] = JtWJ[1][2];
 
-        // Levenberg damping (mild: λ = 1e-3 * trace/3 — keeps things stable)
-        const float lam = 1.0e-3f * (JtWJ[0][0] + JtWJ[1][1] + JtWJ[2][2]) / 3.0f + 1e-12f;
-        JtWJ[0][0] += lam;
-        JtWJ[1][1] += lam;
-        JtWJ[2][2] += lam;
+        // Marquardt-style multiplicative damping: λ scales the diagonal
+        // proportionally to its current magnitude. Larger λ → step
+        // closer to gradient descent (small but always downhill);
+        // smaller λ → closer to Gauss-Newton (fast near the optimum).
+        const float diag0 = JtWJ[0][0] * (1.0f + lam_lm);
+        const float diag1 = JtWJ[1][1] * (1.0f + lam_lm);
+        const float diag2 = JtWJ[2][2] * (1.0f + lam_lm);
+        JtWJ[0][0] = diag0 + 1e-12f;
+        JtWJ[1][1] = diag1 + 1e-12f;
+        JtWJ[2][2] = diag2 + 1e-12f;
 
         // 3x3 solve via cofactor expansion (small matrix, no need for LU).
         const float a = JtWJ[0][0], b = JtWJ[0][1], c = JtWJ[0][2];
@@ -211,25 +267,34 @@ bool plant_fit_2nd_order(const float *freq_hz,
         const float dwn   = D*JtWr[0] + E*JtWr[1] + F*JtWr[2];
         const float dzeta = G*JtWr[0] + Hh*JtWr[1] + I*JtWr[2];
 
-        // Take a damped step + bound zeta.
-        float alpha = 1.0f;
-        for (int t = 0; t < 8; t++) {
-            const float logK_n = logK + alpha * dlogK;
-            const float wn_n   = wn   + alpha * dwn;
-            const float zeta_n = zeta + alpha * dzeta;
-            if (wn_n > 1e-3f && zeta_n > 0.02f && zeta_n < 4.0f) {
-                logK = logK_n; wn = wn_n; zeta = zeta_n;
-                break;
-            }
-            alpha *= 0.5f;
-        }
+        // Trial step with bound check.
+        const float logK_n = logK + dlogK;
+        const float wn_n   = wn   + dwn;
+        const float zeta_n = zeta + dzeta;
+        const bool in_bounds = (wn_n > 1e-3f && zeta_n > 0.02f && zeta_n < 4.0f);
 
-        // convergence check on step magnitude (relative)
-        const float step = fabsf(alpha * dlogK) +
-                           fabsf(alpha * dwn / (wn + 1e-6f)) +
-                           fabsf(alpha * dzeta);
-        if (step < tol_step) { converged = true; it++; break; }
+        // Reject the step if SSE went up OR we left bounds, and grow λ.
+        // Accept and shrink λ otherwise. Real LM trust-region update.
+        if (in_bounds) {
+            const double sse_new = COMPUTE_SSE(logK_n, wn_n, zeta_n);
+            if (sse_new < sse_curr) {
+                logK = logK_n; wn = wn_n; zeta = zeta_n;
+                sse_curr = sse_new;
+                lam_lm *= 0.5f;     // step worked → trust GN more
+                if (lam_lm < 1e-7f) lam_lm = 1e-7f;
+                if (fabsf(dlogK) < tol_logK &&
+                    fabsf(dzeta) < tol_zeta &&
+                    fabsf(dwn) / (wn + 1e-6f) < tol_wn_rel) {
+                    converged = true; it++; break;
+                }
+                continue;
+            }
+        }
+        // Uphill or out-of-bounds: bump damping and re-try next iter.
+        lam_lm *= 4.0f;
+        if (lam_lm > 1e6f) break;   // diverged
     }
+    #undef COMPUTE_SSE
 
     // RMSE in dB at convergence
     const float K = powf(10.0f, logK);

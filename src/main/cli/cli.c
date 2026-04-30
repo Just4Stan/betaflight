@@ -5892,12 +5892,39 @@ bool cliSetSettingByName(const char *cmdline)
 static void cliSysid(const char *cmdName, char *cmdline)
 {
     UNUSED(cmdName);
+    bool raw = false;
     if (cmdline && strncmp(cmdline, "compute", 7) == 0) {
         char *p = cmdline + 7;
         while (*p == ' ') p++;
         int axis = (*p) ? atoi(p) : 1;
         cliPrintLinef("# computing axis %d ...", axis);
         sysidComputeNow(axis);
+    } else if (cmdline && strncmp(cmdline, "raw", 3) == 0) {
+        // Machine-readable single-line-per-axis output, stable column order
+        // for scripting. Format documented at the top of the loop.
+        raw = true;
+    }
+    if (raw) {
+        // version,axis,K,wn_rad_s,zeta,rmse_db,Nbands,iters,conv,p,i,d,age_ms
+        cliPrintLinef("sysid_v1");
+        const uint32_t now = millis();
+        for (int ax = 0; ax < SYSID_AXIS_COUNT; ax++) {
+            sysid_result_t r;
+            if (!sysidGetResult(ax, &r)) {
+                cliPrintLinef("sysid,%d,nan,nan,nan,nan,0,0,0,0,0,0,nan", ax);
+                continue;
+            }
+            int sp = 0, si = 0, sd = 0;
+            const bool gp = sysidSuggestPid(&r, &sp, &si, &sd);
+            uint32_t age = now - r.timestamp_ms;
+            if (age > 1000000u) age = 999999u;
+            cliPrintLinef("sysid,%d,%.3f,%.2f,%.3f,%.2f,%u,%u,%u,%d,%d,%d,%u",
+                          ax, (double)r.K, (double)r.wn_rad_s, (double)r.zeta,
+                          (double)r.rmse_db, r.Nbands, r.iters,
+                          (r.flags & SYSID_FLAG_CONVERGED) ? 1 : 0,
+                          gp ? sp : 0, gp ? si : 0, gp ? sd : 0, age);
+        }
+        return;
     }
     cliPrintLinef("# captured samples: %u   compute last: %u us   max: %u us",
                   (unsigned)sysidCaptureCount(),
@@ -8190,7 +8217,7 @@ const clicmd_t cmdTable[] = {
 #endif
     CLI_COMMAND_DEF("status", "show status", NULL, cliStatus),
 #ifdef USE_SYSID
-    CLI_COMMAND_DEF("sysid", "show on-board PID identifier results", "[compute <axis>]", cliSysid),
+    CLI_COMMAND_DEF("sysid", "show on-board PID identifier results", "[compute <axis>] | [raw]", cliSysid),
 #endif
     CLI_COMMAND_DEF("tasks", "show task stats", NULL, cliTasks),
 #ifdef USE_TIMER_MGMT

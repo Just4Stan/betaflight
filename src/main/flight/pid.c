@@ -1202,9 +1202,13 @@ void FAST_CODE pidController(const pidProfile_t *pidProfile, timeUs_t currentTim
         shouldChirpAxisToggle = true;  // advance chirp axis on next !CHIRP_MODE
 #ifdef USE_SYSID
         if (!sysidWasActive) {
-            // Rising edge: arm the sysid capture for the new axis.
-            sysidNotifyChirpStart(chirpAxis);
-            sysidWasActive = true;
+            // Rising edge: arm the sysid capture for the new axis. If the
+            // start was rejected (previous compute still in flight), DO NOT
+            // set sysidWasActive — otherwise the falling edge would post a
+            // ChirpEnd, which would compute on the prior chirp's stale
+            // buffer and tag the result for this axis. Re-try every tick
+            // until the previous compute drains.
+            sysidWasActive = sysidNotifyChirpStart(chirpAxis);
         }
 #endif
         // update chirp signal
@@ -1318,17 +1322,16 @@ void FAST_CODE pidController(const pidProfile_t *pidProfile, timeUs_t currentTim
         currentPidSetpoint += currentChirp;
 #endif // USE_CHIRP
 #if defined(USE_CHIRP) && defined(USE_SYSID)
-        // Capture (setpoint, filtered-gyro) for on-board system ID. We
-        // intentionally use the FILTERED gyro (gyroRate = gyro.gyroADCf)
-        // because that is what the rate controller acts on, and the
-        // deconvolution in sysid.c assumes unity feedback. The fit
-        // therefore recovers G·F (the airframe plant pre-multiplied by
-        // the gyro filter chain) — i.e. the "controller-facing plant",
-        // which is the right object to base PID-suggestion loop-shaping
-        // on. To recover the bare airframe G we'd also have to model
-        // gyro_lpf1, gyro_lpf2 and dyn_notch in C(jω); deferred.
+        // Capture (chirp-excitation, filtered-gyro) for on-board sysID.
+        // U is the CHIRP signal alone (currentChirp = amplitude·filtered),
+        // not currentPidSetpoint — the latter is contaminated by sticks,
+        // wingAdjustSetpoint, acroTrainer, launchControl, yawSpinRecovery
+        // and would bias the FRF estimate. This matches pichim's MATLAB
+        // reference which uses `pidRuntime.chirp.exc` as U. Y is filtered
+        // gyro (what the rate controller actually acts on), so the fit
+        // recovers G·F — the controller-facing plant.
         if (axis == chirpAxis) {
-            sysidPushSample(axis, currentPidSetpoint, gyroRate);
+            sysidPushSample(axis, currentChirp, gyroRate);
         }
 #endif
         float errorRate = currentPidSetpoint - gyroRate; // r - y

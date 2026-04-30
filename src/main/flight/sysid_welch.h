@@ -1,4 +1,25 @@
 /*
+ * This file is part of Betaflight.
+ *
+ * Betaflight is free software. You can redistribute this software
+ * and/or modify this software under the terms of the GNU General
+ * Public License as published by the Free Software Foundation,
+ * either version 3 of the License, or (at your option) any later
+ * version.
+ *
+ * Betaflight is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ *
+ * See the GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public
+ * License along with this software.
+ *
+ * If not, see <http://www.gnu.org/licenses/>.
+ */
+
+/*
  * Welch H1 estimator + MSC coherence — minimal C port of pichim's
  * `estimate_frequency_response()` from bf_controller_tuning.
  *
@@ -85,7 +106,18 @@ bool welch_init(welch_t *w, int N, int noverlap, welch_fft_ctx_t *fft,
 void welch_reset(welch_t *w);
 
 // Process the (input, output) record start-to-end, accumulating spectra.
+// Convenience wrapper for offline / batch use; for streaming on-board,
+// call welch_process_segment() once per N-sample segment instead.
 void welch_process(welch_t *w, const float *inp, const float *out, int Ndata);
+
+// Streaming entry: caller provides ONE pre-extracted N-sample segment per
+// call; this function applies the window and FFT, then accumulates the
+// per-bin auto/cross spectra. Memory is O(N) — the caller does NOT have
+// to keep the time-domain history. Combine with welch_finalize() once the
+// last segment has been pushed.
+//
+// `seg_u` / `seg_y` are clobbered (in-place windowed-then-FFT'd).
+void welch_process_segment(welch_t *w, float *seg_u, float *seg_y);
 
 // Average accumulated spectra over Navg segments.
 void welch_finalize(welch_t *w);

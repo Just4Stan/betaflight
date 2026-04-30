@@ -57,11 +57,18 @@ typedef struct {
 #define SYSID_FLAG_CONVERGED  (1u << 0)
 #define SYSID_FLAG_VALID      (1u << 1)
 
-// Persistent storage: last result per axis. Saved to EEPROM via the
-// existing config flash path so a fresh boot retains the last fit even
-// after a power cycle. Wiped to zero on `defaults`.
+// Persistent storage: last result per axis + a few user-tunable knobs
+// for the loop-shaping rule and the fit gating. Saved to EEPROM via the
+// existing config flash path so a fresh boot retains the last fit and
+// any custom knob values even after a power cycle. pgResetFn intentionally
+// does NOT zero `persisted` (diagnostic data, not configuration).
 typedef struct sysidConfig_s {
     sysid_result_t persisted[SYSID_AXIS_COUNT];
+    uint16_t target_wc_dHz;        // ×10 — target loop-shaping crossover, default 200 (= 20 Hz)
+    uint16_t fit_fmin_dHz;         // ×10 — band-fit lower edge, default 30 (= 3 Hz)
+    uint16_t fit_fmax_dHz;         // ×10 — band-fit upper edge, default 1000 (= 100 Hz)
+    uint8_t  fit_min_coherence;    // 0–100 — coherence gate %, default 50
+    uint8_t  reserved[3];
 } sysidConfig_t;
 
 PG_DECLARE(sysidConfig_t, sysidConfig);
@@ -77,8 +84,11 @@ void sysidInit(void);
 void sysidPushSample(int axis, float setpoint, float gyroUnfilt);
 
 // Producer (core0). Resets the per-axis ring; call when the chirp
-// generator starts on a new axis.
-void sysidNotifyChirpStart(int axis);
+// generator starts on a new axis. Returns false if the previous chirp's
+// compute hasn't finished yet — caller MUST then skip the matching
+// sysidNotifyChirpEnd, otherwise core1 would run the fit on stale data
+// and tag the result for the wrong axis.
+bool sysidNotifyChirpStart(int axis);
 
 // Producer (core0). Triggers core1 to consume the ring + run the fit.
 void sysidNotifyChirpEnd(int axis);
@@ -113,3 +123,11 @@ void sysidComputeNow(int axis);
 // convergence, low Nbands, or unrealistic params).
 bool sysidSuggestPid(const sysid_result_t *fit,
                      int *out_p, int *out_i, int *out_d);
+
+// Wipe in-RAM and persisted result history for all axes.
+void sysidWipeHistory(void);
+
+// Apply the suggested PID for `axis` to the active pidProfile. Returns
+// false if the fit is invalid or the suggestion can't be derived. Caller
+// is responsible for calling writeEEPROM if persistence is desired.
+bool sysidApplySuggestion(int axis);
