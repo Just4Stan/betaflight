@@ -58,6 +58,7 @@ SECTIONS
         */cli/*(*.text*)
         */config/*(*.text*)
         */pg/*(*.text*)
+        */sysid*.o(*.text*)
         . = ALIGN(4);
     } > FLASH
 
@@ -89,6 +90,7 @@ SECTIONS
         */cli/*(*.rodata*)
         */config/*(*.rodata*)
         */pg/*(*.rodata*)
+        */sysid*.o(*.rodata*)
         . = ALIGN(4);
     } > FLASH
 
