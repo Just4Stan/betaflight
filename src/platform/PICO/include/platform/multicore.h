@@ -90,8 +90,12 @@ bool multicoreScheduleTask(const multicore_task_t *task);
 // the invariant a build-time-checkable contract and surfaces accidental
 // regressions immediately rather than as mysterious flight glitches.
 //
-// Use the wrapper macros in build/core_affinity.h (which works on every
-// target) rather than calling these directly.
+// Wrapper macros for use from generic BF code: ASSERT_CORE0() and
+// ASSERT_CORE1() expand to a hard_assert on USE_MULTICORE targets, and to
+// nothing elsewhere. Generic code should `#include "platform/multicore.h"`
+// inside a `#ifdef USE_MULTICORE` guard, or use the canonical pattern in
+// gyro.c / pid.c / scheduler.c (each of which only enters the guard when
+// the target supports it).
 #include "pico/platform.h"  // for hard_assert + get_core_num
-#define PLATFORM_ASSERT_CORE0() hard_assert(get_core_num() == 0)
-#define PLATFORM_ASSERT_CORE1() hard_assert(get_core_num() == 1)
+#define ASSERT_CORE0() hard_assert(get_core_num() == 0)
+#define ASSERT_CORE1() hard_assert(get_core_num() == 1)

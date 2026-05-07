@@ -30,8 +30,8 @@
 
 #include "drivers/accgyro/accgyro.h"
 
+#include "build/assert_core.h"
 #include "build/build_config.h"
-#include "build/core_affinity.h"
 #include "build/debug.h"
 
 #include "common/maths.h"

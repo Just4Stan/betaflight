@@ -19,22 +19,16 @@
  * If not, see <http://www.gnu.org/licenses/>.
  */
 
-#pragma once
+// Single-include shim for ASSERT_CORE0() / ASSERT_CORE1(). On
+// USE_MULTICORE targets this expands to the platform's hard_assert
+// against get_core_num(); on every other target it's a no-op. This
+// avoids repeating the same #ifdef block in gyro.c, pid.c, scheduler.c,
+// and (newly) flight/sysid.c.
 
-// Core-affinity invariant macros. The hard-realtime gyro/PID/scheduler paths
-// in BF run on core0; core1 is reserved for best-effort offload work
-// registered through multicoreScheduleTask(). These macros let those paths
-// state the contract at the call site without leaking platform headers into
-// generic code.
-//
-// On USE_MULTICORE targets (PICO RP2350) they hard-assert that the current
-// core matches the expected one. On every other target they expand to
-// nothing, so STM32/SITL builds see no overhead and no behavioural change.
+#pragma once
 
 #ifdef USE_MULTICORE
 #include "platform/multicore.h"
-#define ASSERT_CORE0() PLATFORM_ASSERT_CORE0()
-#define ASSERT_CORE1() PLATFORM_ASSERT_CORE1()
 #else
 #define ASSERT_CORE0() ((void)0)
 #define ASSERT_CORE1() ((void)0)

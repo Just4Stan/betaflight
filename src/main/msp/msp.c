@@ -88,6 +88,9 @@
 #include "flight/mixer.h"
 #include "flight/pid.h"
 #include "flight/pid_init.h"
+#ifdef USE_SYSID
+#include "flight/sysid.h"
+#endif
 #include "flight/position.h"
 #include "flight/rpm_filter.h"
 #include "flight/servos.h"
@@ -2698,6 +2701,39 @@ static mspResult_e mspFcProcessOutCommandWithArg(mspDescriptor_t srcDesc, int16_
         break;
     }
 
+#ifdef USE_SYSID
+    case MSP2_SYSID_RESULT:
+        {
+            // Per-axis fixed-point payload (matches the rest of BF's MSP
+            // convention; no raw IEEE-754 over the wire). Scaling:
+            //   K        ×1000 → uint16  (typical 0.05 .. 50)
+            //   wn_rad_s ×10   → uint16  (typical 1 .. 600)
+            //   zeta     ×1000 → uint16  (typical 0.05 .. 5)
+            //   rmse_db  ×100  → uint16  (typical 0 .. 50 dB)
+            //   suggested P/I/D each as uint8 (BF's PID range fits)
+            //   flags as uint8, Nbands as uint16, iters as uint8, ts as uint32
+            for (int ax = 0; ax < SYSID_AXIS_COUNT; ax++) {
+                sysid_result_t r;
+                if (!sysidGetResult(ax, &r)) memset(&r, 0, sizeof(r));
+                int sp = 0, si = 0, sd = 0;
+                const bool gp = sysidSuggestPid(&r, &sp, &si, &sd);
+                sbufWriteU8 (dst, (uint8_t)ax);
+                sbufWriteU16(dst, (uint16_t)constrainf(r.K * 1000.0f, 0.0f, 65000.0f));
+                sbufWriteU16(dst, (uint16_t)constrainf(r.wn_rad_s * 10.0f, 0.0f, 65000.0f));
+                sbufWriteU16(dst, (uint16_t)constrainf(r.zeta * 1000.0f, 0.0f, 65000.0f));
+                sbufWriteU16(dst, (uint16_t)constrainf(r.rmse_db * 100.0f, 0.0f, 65000.0f));
+                sbufWriteU8 (dst, (uint8_t)(gp ? sp : 0));
+                sbufWriteU8 (dst, (uint8_t)(gp ? si : 0));
+                sbufWriteU8 (dst, (uint8_t)(gp ? sd : 0));
+                sbufWriteU8 (dst, (uint8_t)r.flags);
+                sbufWriteU16(dst, r.Nbands);
+                sbufWriteU8 (dst, r.iters);
+                sbufWriteU32(dst, r.timestamp_ms);
+            }
+            break;
+        }
+#endif
+
 #ifdef USE_CLI
     case MSP2_CLI_SETTING:
         {
@@ -3534,6 +3570,35 @@ static mspResult_e mspProcessInCommand(mspDescriptor_t srcDesc, int16_t cmdMSP, 
 #endif
 
         break;
+#ifdef USE_SYSID
+    case MSP2_SET_SYSID_CMD: {
+        // Single byte payload: 0=wipe persisted history, 1=force compute on
+        // axis (next byte), 2=apply suggestion to current PID profile (next
+        // byte = axis). Refused while armed for safety on action 2.
+        if (sbufBytesRemaining(src) < 1) return MSP_RESULT_ERROR;
+        const uint8_t op = sbufReadU8(src);
+        switch (op) {
+        case 0:
+            sysidWipeHistory();
+            break;
+        case 1: {
+            const uint8_t ax = (sbufBytesRemaining(src) >= 1) ? sbufReadU8(src) : 1;
+            sysidComputeNow(ax);
+            break;
+        }
+        case 2: {
+            if (ARMING_FLAG(ARMED)) return MSP_RESULT_ERROR;
+            const uint8_t ax = (sbufBytesRemaining(src) >= 1) ? sbufReadU8(src) : 1;
+            if (!sysidApplySuggestion(ax)) return MSP_RESULT_ERROR;
+            break;
+        }
+        default:
+            return MSP_RESULT_ERROR;
+        }
+        break;
+    }
+#endif
+
     case MSP_EEPROM_WRITE:
         if (ARMING_FLAG(ARMED)) {
             return MSP_RESULT_ERROR;

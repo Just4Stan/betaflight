@@ -213,6 +213,13 @@ typedef enum {
     OSD_WP_NEXT_NUMBER,         // "NEXT 4" - next waypoint number
     OSD_WP_ETA,                 // Estimated time to waypoint
 #endif
+    // OSD_SYSID_PID is appended AFTER the conditional waypoint block so
+    // that adding it doesn't shift any pre-existing enum value on builds
+    // that include the waypoints. Render + active-list entries are gated
+    // on USE_SYSID; on builds without USE_SYSID the slot exists but never
+    // renders. EEPROM_CONF_VERSION must bump whenever this list grows so
+    // older saved item_pos[] arrays don't read past their end.
+    OSD_SYSID_PID,
 
     OSD_ITEM_COUNT // MUST BE LAST
 } osd_items_e;

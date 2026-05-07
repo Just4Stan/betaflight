@@ -103,6 +103,9 @@
 #include "flight/gps_rescue.h"
 #include "flight/pid.h"
 #include "flight/pid_init.h"
+#ifdef USE_SYSID
+#include "flight/sysid.h"
+#endif
 #include "flight/position.h"
 #include "flight/pos_hold.h"
 #include "flight/servos.h"
@@ -735,6 +738,10 @@ void initPhase3(void)
     gyroInitFilters();
 
     pidInit(currentPidProfile);
+
+#ifdef USE_SYSID
+    sysidInit();
+#endif
 
     mixerInitProfile();
 

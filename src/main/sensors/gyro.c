@@ -26,7 +26,7 @@
 
 #include "platform.h"
 
-#include "build/core_affinity.h"
+#include "build/assert_core.h"
 #include "build/debug.h"
 
 #include "common/axis.h"
