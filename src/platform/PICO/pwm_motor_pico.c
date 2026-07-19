@@ -103,6 +103,7 @@ static motorVTable_t motorPwmVTable = {
     .updateComplete = pwmCompleteMotorUpdate,
     .requestTelemetry = NULL,
     .isMotorIdle = NULL,
+    .getMotorIO = pwmGetMotorIO,
 };
 
 bool motorPwmDevInit(motorDevice_t *device, const motorDevConfig_t *motorConfig, uint16_t idlePulse)

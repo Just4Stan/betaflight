@@ -31,6 +31,11 @@
 #error PICO code currently based on a single io port
 #endif
 
+// Function select each pin had before IOConfigGPIO claimed it for SIO,
+// so that IOCFG_AF_PP / IOCFG_AF_OD can hand it back to its peripheral
+// (e.g. serial_4way returning motor pins to PIO DShot or PWM).
+static gpio_function_t ioSavedFunction[DEFIO_PIN_USED_COUNT];
+
 // Initialize all ioRec_t structures.
 // PICO (single port) doesn't use the gpio field.
 void IOInitGlobal(void)
@@ -39,6 +44,7 @@ void IOInitGlobal(void)
 
     for (unsigned pin = 0; pin < DEFIO_PIN_USED_COUNT; pin++) {
         ioRec->pin = pin;
+        ioSavedFunction[pin] = GPIO_FUNC_NULL;
         ioRec++;
     }
 
@@ -121,19 +127,6 @@ void IOToggle(IO_t io)
 
 void IOConfigGPIO(IO_t io, ioConfig_t cfg)
 {
-    /*
-TODO: update to support the following
-IOCFG_AF_PP
-IOCFG_IN_FLOATING
-IOCFG_IPD
-IOCFG_IPU
-IOCFG_OUT_OD
-IOCFG_OUT_PP
-IO_RESET_CFG
-
-SPI_IO_CS_CFG (as defined)
-SPI_IO_CS_HIGH_CFG (as defined)
-    */
     if (!io) {
         return;
     }
@@ -142,15 +135,23 @@ SPI_IO_CS_HIGH_CFG (as defined)
     bprintf("pico IOConfigGPIO gpio %d for 0x%02x (0=in, 1=out)",ioPin, cfg);
 
     gpio_function_t currentFunction = gpio_get_function(ioPin);
-    if (currentFunction == GPIO_FUNC_NULL) {
-        // Select GPIO_FUNC_SIO, set direction to input, clear output value (set to low)
-        gpio_init(ioPin);
-    } else if (currentFunction != GPIO_FUNC_SIO) {
-        bprintf("Warning: not redefining gpio function type from %d to SIO\n", currentFunction);
+
+    if (cfg & IO_CONFIG_AF) {
+        if (currentFunction == GPIO_FUNC_SIO && ioSavedFunction[ioPin] != GPIO_FUNC_NULL) {
+            gpio_set_function(ioPin, ioSavedFunction[ioPin]);
+        }
+        return;
     }
 
+    // Configure direction and pulls before switching the function select to SIO,
+    // so the pin doesn't glitch through an unintended state.
     gpio_set_dir(ioPin, (cfg & 0x01)); // 0 = in, 1 = out
     gpio_set_pulls(ioPin, (cfg >> 5) & GPIO_PULLUP, (cfg >> 5) & GPIO_PULLDOWN);
+
+    if (currentFunction != GPIO_FUNC_SIO) {
+        ioSavedFunction[ioPin] = currentFunction;
+        gpio_set_function(ioPin, GPIO_FUNC_SIO);
+    }
 }
 
 IO_t IOGetByTag(ioTag_t tag)

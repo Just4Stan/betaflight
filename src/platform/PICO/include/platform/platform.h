@@ -104,16 +104,23 @@ struct quadSpiResource_s
 #define GPIO_PULLUP     1
 #define GPIO_PULLDOWN   2
 
+// Pin states as used by generic code (e.g. serial_4way)
+#define GPIO_PIN_RESET  0
+#define GPIO_PIN_SET    1
+
 // speed will either GPIO_SLEW_RATE_SLOW or GPIO_SLEW_RATE_FAST
 #define IO_CONFIG(mode, speed, pupd) ((mode) | ((speed) << 2) | ((pupd) << 5))
 
-// TODO update these and IOConfigGPIO
+// AF configs request handing the pin back to the peripheral (function select) it
+// had before IOConfigGPIO claimed it for SIO; must not collide with IO_CONFIG values
+#define IO_CONFIG_AF          (1 << 7)
+
 #define IOCFG_OUT_PP          IO_CONFIG(GPIO_OUT, 0, 0)
 #define IOCFG_OUT_OD          IO_CONFIG(GPIO_OUT, 0, 0)
-#define IOCFG_AF_PP           0
-#define IOCFG_AF_OD           0
-#define IOCFG_IPD             IO_CONFIG(GPIO_IN, 0, 0)
-#define IOCFG_IPU             IO_CONFIG(GPIO_IN, 0, 0)
+#define IOCFG_AF_PP           IO_CONFIG_AF
+#define IOCFG_AF_OD           IO_CONFIG_AF
+#define IOCFG_IPD             IO_CONFIG(GPIO_IN, 0, GPIO_PULLDOWN)
+#define IOCFG_IPU             IO_CONFIG(GPIO_IN, 0, GPIO_PULLUP)
 #define IOCFG_IN_FLOATING     IO_CONFIG(GPIO_IN, 0, 0)
 
 // TODO update these and IOConfigGPIO

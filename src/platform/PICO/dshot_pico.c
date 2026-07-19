@@ -252,7 +252,27 @@ static void dshotUpdateComplete(void)
 static bool dshotEnableMotors(void)
 {
     bprintf("pico dshotEnableMotors (useDshotTelemetry = %d)", useDshotTelemetry);
-    // No special processing required
+
+    // Reclaim and reinitialise any motor pin whose function select was taken away
+    // from the PIO, e.g. by the 4-way interface bit-banging the pin via SIO.
+    for (int motorIndex = 0; motorIndex < dshotMotorCount; motorIndex++) {
+        motorOutput_t *const motor = &dshotMotors[motorIndex];
+        if (!motor->configured) {
+            continue;
+        }
+        if (gpio_get_function(motor->pinIndex) != PIO_FUNCSEL_NUM(motor->pio, motor->pinIndex)) {
+            bool dshotInit;
+            if (useDshotTelemetry) {
+                dshotInit = dshot_program_bidir_init(motor->pio, motor->pio_sm, motor->offset, motor->pinIndex);
+            } else {
+                dshotInit = dshot_program_init(motor->pio, motor->pio_sm, motor->offset, motor->pinIndex);
+            }
+            if (!dshotInit) {
+                bprintf("dshotEnableMotors failed to reinit pio for motor index %d, pin %d", motorIndex, motor->pinIndex);
+                return false;
+            }
+        }
+    }
     return true;
 }
 
@@ -299,6 +319,14 @@ static void dshotRequestTelemetry(unsigned index)
     }
 }
 
+static IO_t dshotGetMotorIO(unsigned index)
+{
+    if (index >= dshotMotorCount) {
+        return IO_NONE;
+    }
+    return dshotMotors[index].io;
+}
+
 static motorVTable_t dshotVTable = {
     .postInit = dshotPostInit,
     .enable = dshotEnableMotors,
@@ -320,6 +348,7 @@ static motorVTable_t dshotVTable = {
     .shutdown = dshotShutdown,
     .isMotorIdle = dshotIsMotorIdle,
     .requestTelemetry = dshotRequestTelemetry,
+    .getMotorIO = dshotGetMotorIO,
 };
 
 bool dshotPwmDevInit(motorDevice_t *device, const motorDevConfig_t *motorConfig)
