@@ -30,7 +30,7 @@
 
 #if defined(USE_MSP_DISPLAYPORT)
 
-PG_REGISTER_WITH_RESET_FN(displayPortProfile_t, displayPortProfileMsp, PG_DISPLAY_PORT_MSP_CONFIG, 1);
+PG_REGISTER_WITH_RESET_FN(displayPortProfile_t, displayPortProfileMsp, PG_DISPLAY_PORT_MSP_CONFIG, 2);
 
 void pgResetFn_displayPortProfileMsp(displayPortProfile_t *displayPortProfile)
 {
@@ -43,7 +43,7 @@ void pgResetFn_displayPortProfileMsp(displayPortProfile_t *displayPortProfile)
 
 #if defined(USE_MAX7456)
 
-PG_REGISTER_WITH_RESET_FN(displayPortProfile_t, displayPortProfileMax7456, PG_DISPLAY_PORT_MAX7456_CONFIG, 0);
+PG_REGISTER_WITH_RESET_FN(displayPortProfile_t, displayPortProfileMax7456, PG_DISPLAY_PORT_MAX7456_CONFIG, 1);
 
 void pgResetFn_displayPortProfileMax7456(displayPortProfile_t *displayPortProfile)
 {
@@ -60,7 +60,7 @@ void pgResetFn_displayPortProfileMax7456(displayPortProfile_t *displayPortProfil
 
 #if ENABLE_FB_OSD
 
-PG_REGISTER_WITH_RESET_FN(displayPortProfile_t, displayPortProfileFbOsd, PG_DISPLAY_PORT_FBOSD_CONFIG, 1);
+PG_REGISTER_WITH_RESET_FN(displayPortProfile_t, displayPortProfileFbOsd, PG_DISPLAY_PORT_FBOSD_CONFIG, 2);
 
 void pgResetFn_displayPortProfileFbOsd(displayPortProfile_t *displayPortProfile)
 {

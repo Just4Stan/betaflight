@@ -34,6 +34,7 @@ typedef struct displayPortProfile_s {
 
     uint8_t fontSelection[DISPLAYPORT_SEVERITY_COUNT];
     uint8_t useDeviceBlink;    // Use device local blink capability
+    uint8_t reportArmed;       // Report ARM in MSP_STATUS to the displayport device while disarmed
 } displayPortProfile_t;
 
 PG_DECLARE(displayPortProfile_t, displayPortProfileMsp);

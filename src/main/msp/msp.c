@@ -120,6 +120,7 @@
 #include "pg/autopilot.h"
 #include "pg/beeper.h"
 #include "pg/board.h"
+#include "pg/displayport_profiles.h"
 #include "pg/dyn_notch.h"
 #include "pg/gps_rescue.h"
 #include "pg/gyrodev.h"
@@ -1132,6 +1133,15 @@ static bool mspProcessOutCommand(mspDescriptor_t srcDesc, int16_t cmdMSP, sbuf_t
     case MSP_STATUS: {
         boxBitmask_t flightModeFlags;
         const int flagBits = packFlightModeFlags(&flightModeFlags);
+#ifdef USE_MSP_DISPLAYPORT
+        // Digital VTX (DJI O3/O4) stays in low power until it sees ARM; optionally
+        // report ARM to the displayport device only. Arming state is unchanged.
+        if (displayPortProfileMsp()->reportArmed
+            && displayPortMspGetSerial() != SERIAL_PORT_NONE
+            && srcDesc == getMspSerialPortDescriptor(displayPortMspGetSerial())) {
+            bitArraySet(&flightModeFlags, 0);   // BOXARM is always the first active box
+        }
+#endif
 
         sbufWriteU16(dst, getTaskDeltaTimeUs(TASK_PID));
 #ifdef USE_I2C
